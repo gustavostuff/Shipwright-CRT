@@ -1,7 +1,10 @@
 #include "Menu.h"
+#include "CrtSimpleMenu.h"
 #include "BackendTypes.h"
 #include "UIWidgets.hpp"
 #include "soh/OTRGlobals.h"
+#include "soh/cvar_prefixes.h"
+#include <ship/window/gui/ConsoleWindow.h>
 #include <ship/config/Config.h>
 #include <ship/window/gui/GuiElement.h>
 #include "SohModals.h"
@@ -11,6 +14,7 @@
 
 extern "C" {
 #include "z64.h"
+#include "include/z64audio.h"
 extern PlayState* gPlayState;
 }
 std::vector<ImVec2> windowTypeSizes = { {} };
@@ -579,9 +583,17 @@ void Menu::Draw() {
     SyncVisibilityConsoleVariable();
 }
 
+
+
 static bool freshOpen = true;
 void Menu::DrawElement() {
     if (OTRGlobals::Instance->fontStandardLargest == nullptr) {
+        return;
+    }
+
+    // CRT: show the minimal menu instead of the full tabbed UI (set CrtSimpleMenu=0 to restore the original).
+    if (CVarGetInteger(CVAR_SETTING("CrtSimpleMenu"), 1)) {
+        DrawCrtSimpleMenu();
         return;
     }
     for (auto& [reason, info] : disabledMap) {
@@ -833,9 +845,10 @@ void Menu::DrawElement() {
     ImGui::SetNextWindowPos(pos + style.ItemSpacing * 2);
 
     // Increase sidebar width on larger screens to accomodate people scaling their menus.
-    float sidebarWidth = 200 - style.ItemSpacing.x;
+    // CRT: halved so the left entry panel doesn't eat the tiny 320px-wide screen.
+    float sidebarWidth = (200 - style.ItemSpacing.x) / 2;
     if (menuSize.x > 1600) {
-        sidebarWidth = menuSize.x * 0.15f;
+        sidebarWidth = menuSize.x * 0.075f;
     }
 
     const char* sidebarCvar = menuEntries.at(headerIndex).sidebarCvar;

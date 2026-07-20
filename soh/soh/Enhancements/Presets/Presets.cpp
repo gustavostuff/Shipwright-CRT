@@ -102,11 +102,21 @@ std::string FormatPresetPath(std::string name) {
     return fmt::format("{}/{}.json", presetFolder, SanitizeFilename(name));
 }
 
+std::vector<std::string> GetPresetNames() {
+    std::vector<std::string> names;
+    names.reserve(presets.size());
+    for (auto& [name, info] : presets) {
+        names.push_back(name);
+    }
+    return names;
+}
+
 void applyPreset(std::string presetName, std::vector<PresetSection> includeSections) {
     auto& info = presets[presetName];
     for (int i = PRESET_SECTION_SETTINGS; i < PRESET_SECTION_MAX; i++) {
         if (info.apply[i] && info.presetValues["blocks"].contains(blockInfo[i].names[1])) {
-            if (!includeSections.empty() && !SohUtils::Contains(i, includeSections)) {
+            if (!includeSections.empty() &&
+                std::find(includeSections.begin(), includeSections.end(), i) == includeSections.end()) {
                 continue;
             }
             if (i == PRESET_SECTION_TRACKERS) {
@@ -155,6 +165,94 @@ void applyPreset(std::string presetName, std::vector<PresetSection> includeSecti
     }
     ShipInit::InitAll();
     OTRGlobals::Instance->ScaleImGui();
+}
+
+static bool CVarLeafMatchesExpected(const std::string& path, const nlohmann::json& expected) {
+    auto vars = Ship::Context::GetRawInstance()->GetConsoleVariables();
+    auto var = vars->Get(path.c_str());
+    if (var == nullptr) {
+        return false;
+    }
+
+    if (expected.is_boolean()) {
+        return var->Type == Ship::ConsoleVariableType::Integer &&
+               var->Integer == (expected.get<bool>() ? 1 : 0);
+    }
+    if (expected.is_number_float()) {
+        const double want = expected.get<double>();
+        if (var->Type == Ship::ConsoleVariableType::Float) {
+            return static_cast<double>(var->Float) == want;
+        }
+        if (var->Type == Ship::ConsoleVariableType::Integer) {
+            return static_cast<double>(var->Integer) == want;
+        }
+        return false;
+    }
+    if (expected.is_number_integer() || expected.is_number_unsigned()) {
+        const int32_t want = expected.get<int32_t>();
+        if (var->Type == Ship::ConsoleVariableType::Integer) {
+            return var->Integer == want;
+        }
+        if (var->Type == Ship::ConsoleVariableType::Float) {
+            return static_cast<int32_t>(var->Float) == want;
+        }
+        return false;
+    }
+    if (expected.is_string()) {
+        return var->Type == Ship::ConsoleVariableType::String && var->String != nullptr &&
+               expected.get<std::string>() == var->String;
+    }
+    return false;
+}
+
+static bool CVarObjectMatchesExpected(const std::string& prefix, const nlohmann::json& expected) {
+    if (!expected.is_object()) {
+        return CVarLeafMatchesExpected(prefix, expected);
+    }
+    for (auto& [key, value] : expected.items()) {
+        const std::string path = prefix.empty() ? key : (prefix + "." + key);
+        if (value.is_object()) {
+            if (!CVarObjectMatchesExpected(path, value)) {
+                return false;
+            }
+        } else if (!CVarLeafMatchesExpected(path, value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool DoesPresetMatchCurrent(const std::string& presetName) {
+    auto it = presets.find(presetName);
+    if (it == presets.end()) {
+        return false;
+    }
+
+    const auto& blocks = it->second.presetValues["blocks"];
+    if (!blocks.contains("enhancements")) {
+        return false;
+    }
+
+    // Prefer live CVars for leaf values; use nested JSON only for null-block presence.
+    auto nested = Ship::Context::GetRawInstance()->GetConfig()->GetNestedJson();
+    const nlohmann::json* cvars =
+        (nested.contains("CVars") && nested["CVars"].is_object()) ? &nested["CVars"] : nullptr;
+
+    for (auto& [blockKey, expected] : blocks["enhancements"].items()) {
+        if (expected.is_null()) {
+            if (cvars != nullptr && cvars->contains(blockKey)) {
+                const auto& actual = (*cvars)[blockKey];
+                if (!actual.is_null() && !(actual.is_object() && actual.empty())) {
+                    return false;
+                }
+            }
+            continue;
+        }
+        if (!CVarObjectMatchesExpected(blockKey, expected)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void DrawPresetSelector(std::vector<PresetSection> includeSections, std::string presetLoc, bool disabled) {

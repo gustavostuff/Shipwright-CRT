@@ -267,6 +267,11 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
             COMMAND ${ImageMagick_convert_EXECUTABLE} ${CMAKE_SOURCE_DIR}/soh/macosx/sohIcon.png -resize 512x512 ${CMAKE_BINARY_DIR}/sohIcon.png
             OUTPUT_VARIABLE outVar
         )
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/config/sohIcon-512.png")
+        # CRT / Pi hosts without ImageMagick: use the checked-in 512px icon.
+        file(COPY "${CMAKE_SOURCE_DIR}/config/sohIcon-512.png"
+             DESTINATION "${CMAKE_BINARY_DIR}")
+        file(RENAME "${CMAKE_BINARY_DIR}/sohIcon-512.png" "${CMAKE_BINARY_DIR}/sohIcon.png")
     endif()
 endif()
 

@@ -63,9 +63,26 @@
 
 #ifdef __APPLE__
 #include <SDL_scancode.h>
+#include <SDL_keyboard.h>
+#include <SDL_gamecontroller.h>
 #else
 #include <SDL2/SDL_scancode.h>
+#include <SDL2/SDL_keyboard.h>
+#include <SDL2/SDL_gamecontroller.h>
 #endif
+
+// ImGui SDL2 backend hook, declared here to avoid pulling in the backend header.
+// Used to force a controller re-scan: after first-run ROM extraction the gamepad
+// connects only after ImGui's one-shot scan already ran, and the backend never
+// re-scans because libultraship filters SDL_CONTROLLERDEVICEADDED out of ImGui's events.
+enum ImGui_ImplSDL2_GamepadMode {
+    ImGui_ImplSDL2_GamepadMode_AutoFirst,
+    ImGui_ImplSDL2_GamepadMode_AutoAll,
+    ImGui_ImplSDL2_GamepadMode_Manual
+};
+void ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode mode,
+                                   struct _SDL_GameController** manual_gamepads_array = nullptr,
+                                   int manual_gamepads_count = -1);
 
 #ifdef __SWITCH__
 #include <port/switch/SwitchImpl.h>
@@ -128,6 +145,10 @@ const uint32_t defaultImGuiScale = 1;
 #endif
 
 const float imguiScaleOptionToValue[4] = { 0.75f, 1.0f, 1.5f, 2.0f };
+
+// CRT: single knob for the whole ImGui UI. Every CreateFontWithSize() call for
+// menu/console fonts uses this so all UI text renders at one uniform size.
+static constexpr float kUiFontSize = 10.0f;
 
 bool SoH_HandleConfigDrop(char* filePath);
 
@@ -318,15 +339,19 @@ OTRGlobals::OTRGlobals() {
         overlay->LoadFont("Fipps", 32.0f, "fonts/Fipps-Regular.otf");
         overlay->SetCurrentFont(CVarGetString(CVAR_GAME_OVERLAY_FONT, "Press Start 2P"));
 
-        fontMonoSmall = CreateFontWithSize(14.0f, "fonts/Inconsolata-Regular.ttf");
-        fontMono = CreateFontWithSize(16.0f, "fonts/Inconsolata-Regular.ttf");
-        fontMonoLarger = CreateFontWithSize(20.0f, "fonts/Inconsolata-Regular.ttf");
-        fontMonoLargest = CreateFontWithSize(24.0f, "fonts/Inconsolata-Regular.ttf");
-        fontStandard = CreateFontWithSize(16.0f, "fonts/Montserrat-Regular.ttf");
-        fontStandardLarger = CreateFontWithSize(20.0f, "fonts/Montserrat-Regular.ttf");
-        fontStandardLargest = CreateFontWithSize(24.0f, "fonts/Montserrat-Regular.ttf");
-        fontJapanese = CreateFontWithSize(24.0f, "fonts/NotoSansJP-Regular.ttf", true);
-        ImGui::GetIO().FontDefault = fontStandardLarger;
+        fontMonoSmall = CreateFontWithSize(kUiFontSize, "fonts/Inconsolata-Regular.ttf");
+        fontMono = CreateFontWithSize(kUiFontSize, "fonts/Inconsolata-Regular.ttf");
+        fontMonoLarger = CreateFontWithSize(kUiFontSize, "fonts/Inconsolata-Regular.ttf");
+        fontMonoLargest = CreateFontWithSize(kUiFontSize, "fonts/Inconsolata-Regular.ttf");
+        // Use a custom pixel font for the menu if the user dropped one next to the app
+        // (e.g. proggy-tiny.ttf in the game folder). Falls back to the packed Montserrat.
+        std::string menuFont =
+            std::filesystem::exists("proggy-tiny.ttf") ? "proggy-tiny.ttf" : "fonts/Montserrat-Regular.ttf";
+        fontStandard = CreateFontWithSize(kUiFontSize, menuFont);
+        fontStandardLarger = CreateFontWithSize(kUiFontSize, menuFont);
+        fontStandardLargest = CreateFontWithSize(kUiFontSize, menuFont);
+        fontJapanese = CreateFontWithSize(kUiFontSize, "fonts/NotoSansJP-Regular.ttf", true);
+        ImGui::GetIO().FontDefault = fontStandard;
     }
 
     previousImGuiScaleIndex = -1;
@@ -339,6 +364,7 @@ typedef enum ExtractSteps {
     ES_WINDOWS,
     ES_EXTRACT_ARGS,
     ES_EXTRACT,
+    ES_FATAL_QUIT,
     ES_VERIFY,
 } ExtractSteps;
 
@@ -415,13 +441,53 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
         }
     }
     Extractor extract;
-    PromptSteps promptStep = PS_FILE_CHECK;
-    bool generatedIsMQ = false;
     std::atomic<size_t> extractCount = 0, totalExtract = 0;
+
+    // CRT: self-closing fatal errors (no buttons — controller/mouse not required).
+    bool fatalQuit = false;
+    std::string fatalTitle;
+    std::string fatalMessage;
+    std::chrono::steady_clock::time_point fatalQuitStart;
+    constexpr int kFatalQuitCountdownSecs = 7;
+
+    auto beginFatalQuit = [&](const char* title, const char* message) {
+        if (fatalQuit) {
+            return;
+        }
+        fatalQuit = true;
+        fatalTitle = title;
+        fatalMessage = message;
+        fatalQuitStart = std::chrono::steady_clock::now();
+        extractStep = ES_FATAL_QUIT;
+    };
 
     std::string installPath = Ship::Context::GetAppBundlePath();
     std::string dataPath = Ship::Context::GetAppDirectoryPath(appShortName);
     std::string file;
+
+    // CRT/AppImage: extractor assets live inside the AppImage (…/usr/bin/assets), same as
+    // upstream SoH releases — nothing is copied next to the AppImage on disk.
+    // Require real content (xml/), not an empty placeholder folder.
+    auto assetsDirExists = [](const std::string& base) {
+        if (base.empty()) {
+            return false;
+        }
+        return std::filesystem::is_directory(base + "/assets/xml");
+    };
+    if (!assetsDirExists(installPath)) {
+        // Prefer $APPDIR over cwd so a leftover empty ./assets cannot shadow the AppImage.
+        if (const char* appdir = std::getenv("APPDIR")) {
+            std::string candidate = std::string(appdir) + "/usr/bin";
+            if (assetsDirExists(candidate)) {
+                installPath = candidate;
+            }
+        }
+        if (!assetsDirExists(installPath) && assetsDirExists(dataPath)) {
+            installPath = dataPath;
+        } else if (!assetsDirExists(installPath) && assetsDirExists(".")) {
+            installPath = ".";
+        }
+    }
 
 #if defined(__SWITCH__)
     SohGui::RegisterPopup("Outdated ROM Archives",
@@ -438,11 +504,10 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
     OSFatal();
 #endif
 
-    if (!std::filesystem::exists(installPath + "/assets")) {
-        SohGui::RegisterPopup("Extractor assets not found",
-                              "No O2R files found. Missing 'assets/' folder needed to generate OTR file.\nPlease "
-                              "re-extract them from the download or.\n\nExiting...",
-                              "OK", "", [&]() { exit(1); });
+    if (!assetsDirExists(installPath)) {
+        beginFatalQuit("Extractor Assets Not Found",
+                       "Missing 'assets/' folder needed to extract a ROM. Re-download the CRT package "
+                       "(or AppImage) and try again.");
     } else if (shouldRegen) {
         SohGui::RegisterPopup("Outdated ROM Archives",
                               "Your oot.o2r or oot-mq.o2r were created with incompatible versions of SoH.\nYou will "
@@ -459,7 +524,7 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
 #endif
 
     while (!extractDone) {
-        if (SohGui::PopupsQueued() > 0 || extractionTask.has_value()) {
+        if (fatalQuit || SohGui::PopupsQueued() > 0 || extractionTask.has_value()) {
             goto render;
         }
         switch (extractStep) {
@@ -575,7 +640,6 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
                                 !std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) +
                                                          "/oot-mq.o2r")) {
                                 extractStep = ES_EXTRACT;
-                                promptStep = PS_FILE_CHECK;
                             } else {
                                 extractStep = ES_VERIFY;
                             }
@@ -590,7 +654,7 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
                     bool doExtract = true;
                     std::string archive = (extract.IsMasterQuest() ? "oot-mq.o2r" : "oot.o2r");
                     if (std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) + "/" + archive)) {
-                        std::string msg = "Archive for current ROM, " + archive + ", already exists.\nExtract again?";
+                        std::string msg = archive + ", already exists.\nExtract again?";
                         SohGui::RegisterPopup("Confirm Re-extract", msg.c_str(), "Yes", "No", [&]() {
                             extractionTask = threadPool->submit_task([&]() -> void {
                                 extract.CallZapd(installPath, Ship::Context::GetAppDirectoryPath(appShortName),
@@ -616,78 +680,68 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
                 break;
             }
             case ES_EXTRACT: {
-                switch (promptStep) {
-                    case PS_FILE_CHECK: {
-                        const bool ootO2RExists =
-                            std::filesystem::exists(
-                                Ship::Context::LocateFileAcrossAppDirs("oot-mq.o2r", appShortName)) ||
-                            std::filesystem::exists(Ship::Context::LocateFileAcrossAppDirs("oot.o2r", appShortName));
-
-                        if (!ootO2RExists) {
-                            SohGui::RegisterPopup(
-                                "No O2R Files", "No O2R files found. Generate one now?", "Yes", "No",
-                                [&]() { promptStep = PS_LOCAL; }, [&]() { exit(0); });
-                        } else {
-                            extractStep = ES_VERIFY;
-                        }
-                        continue;
-                    }
-                    case PS_LOCAL: {
-                        extract = Extractor();
-                        extract.SetSearchPath(installPath);
-                        extract.GetRoms(args);
-                        extract.SetSearchPath(dataPath);
-                        extract.GetRoms(args);
-                        if (!args.empty()) {
-                            promptStep = PS_WAIT;
-                            SohGui::RegisterPopup(
-                                "ROMs found", "ROMs found in application directory. Would you like to process them?",
-                                "Yes", "No", [&]() { extractStep = ES_EXTRACT_ARGS; },
-                                [&]() { promptStep = PS_FIRST; });
-                        } else {
-                            promptStep = PS_FIRST;
-                        }
-                        continue;
-                    }
-                    case PS_FIRST: {
-                        if (!extract.ManuallySearchForRomMatchingType(RomSearchMode::Both)) {
-                            promptStep = PS_FILE_CHECK;
-                            continue;
-                        }
-                        extractionTask = threadPool->submit_task([&]() -> void {
-                            extract.CallZapd(installPath, Ship::Context::GetAppDirectoryPath(appShortName),
-                                             &extractCount, &totalExtract);
-                            generatedIsMQ = extract.IsMasterQuest();
-                            promptStep = PS_SECOND;
-                            extractCount = 0;
-                            totalExtract = 0;
-                        });
-                        continue;
-                    }
-                    case PS_SECOND: {
-                        SohGui::RegisterPopup(
-                            "Extraction Complete", "ROM Extracted. Extract another?", "Yes", "No",
-                            [&]() {
-                                if (!extract.ManuallySearchForRomMatchingType(generatedIsMQ ? RomSearchMode::Vanilla
-                                                                                            : RomSearchMode::MQ)) {
-                                    extractStep = ES_VERIFY;
-                                } else {
-                                    extractionTask = threadPool->submit_task([&]() -> void {
-                                        extract.CallZapd(installPath, Ship::Context::GetAppDirectoryPath(appShortName),
-                                                         &extractCount, &totalExtract);
-                                        extractStep = ES_VERIFY;
-                                        extractCount = 0;
-                                        totalExtract = 0;
-                                    });
-                                }
-                            },
-                            [&]() { extractStep = ES_VERIFY; });
-                        continue;
-                    }
-                    default:
-                        break;
+#if !defined(__SWITCH__) && !defined(__WIIU__)
+                // CRT: fully automatic, prompt-free extraction. If assets already exist we skip
+                // straight to verification; otherwise we look for a valid OoT ROM sitting next to
+                // the game and extract it silently. No "Generate one now?" / "Extract another?"
+                // dialogs, so the controller never needs to drive early setup screens.
+                const bool ootO2RExists =
+                    std::filesystem::exists(Ship::Context::LocateFileAcrossAppDirs("oot-mq.o2r", appShortName)) ||
+                    std::filesystem::exists(Ship::Context::LocateFileAcrossAppDirs("oot.o2r", appShortName));
+                if (ootO2RExists) {
+                    extractStep = ES_VERIFY;
+                    continue;
                 }
+
+                // Gather candidate ROMs from the install + data folders.
+                std::vector<std::string> roms;
+                extract = Extractor();
+                extract.SetSearchPath(installPath);
+                extract.GetRoms(roms);
+                extract.SetSearchPath(dataPath);
+                extract.GetRoms(roms);
+
+                if (roms.empty()) {
+                    // No .z64/.n64/.v64 next to the game at all.
+                    beginFatalQuit("No ROM Found",
+                                   "No N64 ROM found. Place a supported OOT ROM alonside the SoH AppImage");
+                    continue;
+                }
+
+                // Pick the first ROM that passes validation (size + not compressed + known CRC).
+                // RunFileStandalone leaves the extractor primed with that ROM's data for CallZapd.
+                std::string validRom;
+                for (const auto& rom : roms) {
+                    if (extract.RunFileStandalone(rom)) {
+                        validRom = rom;
+                        break;
+                    }
+                }
+
+                if (validRom.empty()) {
+                    // At least one ROM-looking file was found, but none matched a supported hash/size.
+                    beginFatalQuit("Invalid ROM",
+                                   "Invalid ROM. See the list of supported hashes on the SoH GitHub page.");
+                    continue;
+                }
+
+                file = validRom;
+                extractionTask = threadPool->submit_task([&]() -> void {
+                    extract.CallZapd(installPath, Ship::Context::GetAppDirectoryPath(appShortName), &extractCount,
+                                     &totalExtract);
+                    extractCount = 0;
+                    totalExtract = 0;
+                    extractStep = ES_VERIFY;
+                });
+                continue;
+#else
+                extractStep = ES_VERIFY;
                 break;
+#endif
+            }
+            case ES_FATAL_QUIT: {
+                // Countdown modal is drawn in the render section below.
+                goto render;
             }
             case ES_VERIFY: {
                 const bool ootO2RExists =
@@ -712,6 +766,7 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
         }
         // Process window events for resize, mouse, keyboard events
         wnd->HandleEvents();
+
         UIWidgets::Colors themeColor =
             static_cast<UIWidgets::Colors>(CVarGetInteger(CVAR_SETTING("Menu.Theme"), UIWidgets::Colors::LightBlue));
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIWidgets::ColorValues.at(themeColor));
@@ -743,21 +798,63 @@ void OTRGlobals::RunExtract(int argc, char* argv[]) {
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(color.x, color.y, color.z, 0.6f));
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(color.x, color.y, color.z, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.3f));
+                // CRT: constrain the extraction dialog to ~75% of the viewport width instead of
+                // the old fixed 600px progress bar (which overflowed small screens).
+                ImGui::SetNextWindowSize(ImVec2(ImGui::GetMainViewport()->WorkSize.x * 0.75f, 0.0f),
+                                         ImGuiCond_Always);
                 if (ImGui::BeginPopupModal("ROM Extraction", NULL,
-                                           ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize |
-                                               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                                               ImGuiWindowFlags_NoSavedSettings)) {
+                                           ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
                     float progress = (totalExtract > 0.0f ? (float)extractCount / (float)totalExtract : 0) * 100.0f;
                     auto filename = std::filesystem::path(file).filename().string();
-                    ImGui::Text("Extracting %s...%s", filename.c_str(),
-                                roundf(progress) == 100.0f ? " Done. Finishing up." : "");
+                    ImGui::TextWrapped("Extracting %s...%s", filename.c_str(),
+                                       roundf(progress) == 100.0f ? " Done. Finishing up." : "");
                     std::string overlay = extractCount > 0 ? fmt::format("{:.0f}%", progress) : "Starting Up";
-                    ImGui::ProgressBar(progress / 100.0f, ImVec2(600.0f, 50.0f), overlay.c_str());
+                    ImGui::ProgressBar(progress / 100.0f, ImVec2(ImGui::GetContentRegionAvail().x, 50.0f),
+                                       overlay.c_str());
                     ImGui::EndPopup();
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::PopStyleVar(2);
             }
+        }
+
+        // CRT: fatal setup errors (missing assets, invalid ROM, …). Self-closing countdown,
+        // no buttons — nothing to navigate with a controller or mouse.
+        if (fatalQuit) {
+            if (!ImGui::IsPopupOpen(fatalTitle.c_str())) {
+                ImGui::OpenPopup(fatalTitle.c_str());
+            }
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(ImGui::GetMainViewport()->WorkSize.x * 0.75f, 0.0f), ImGuiCond_Always);
+            if (ImGui::BeginPopupModal(fatalTitle.c_str(), NULL,
+                                       ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+                ImGui::TextWrapped("%s", fatalMessage.c_str());
+                ImGui::Spacing();
+                double elapsed =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - fatalQuitStart).count();
+                int remaining = kFatalQuitCountdownSecs - static_cast<int>(elapsed);
+                if (remaining < 0) {
+                    remaining = 0;
+                }
+                ImGui::Text("Closing app in: %d", remaining);
+                ImGui::EndPopup();
+            }
+            if (std::chrono::duration<double>(std::chrono::steady_clock::now() - fatalQuitStart).count() >=
+                kFatalQuitCountdownSecs) {
+                exit(1);
+            }
+        }
+
+        // CRT: RGB-Pi OS doesn't render the OS mouse cursor, so draw a small orange
+        // square at the pointer position as a visible cursor indicator.
+        if (ImGui::IsMousePosValid()) {
+            ImVec2 mp = ImGui::GetMousePos();
+            const float half = 4.0f;
+            ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(mp.x - half, mp.y - half),
+                                                          ImVec2(mp.x + half, mp.y + half),
+                                                          IM_COL32(255, 140, 0, 255));
         }
         gui->EndDraw();
         sohFast3dWindow->EndFrame();
@@ -1528,6 +1625,13 @@ extern "C" void InitOTR(int argc, char* argv[]) {
     OTRGlobals::Instance = new OTRGlobals();
     OTRGlobals::Instance->RunExtract(argc, argv);
 
+    // CRT: never boot into the settings menu. Select during the extraction GUI loop (or a
+    // leftover gOpenWindows.Menu=1) can leave it open, and controller nav is broken until
+    // the menu is closed and reopened. Force it shut before gameplay starts.
+    if (SohGui::GetSohMenu() != nullptr) {
+        SohGui::GetSohMenu()->Hide();
+    }
+
     OTRGlobals::Instance->Initialize();
     CustomMessageManager::Instance = new CustomMessageManager();
     ItemTableManager::Instance = new ItemTableManager();
@@ -1667,13 +1771,37 @@ extern "C" uint64_t GetUnixTimestamp() {
     return (uint64_t)millis.count();
 }
 
+// If SDL sees a game controller but ImGui's backend has none (e.g. the pad connected
+// after ImGui's one-shot scan during first-run extraction), force a re-scan so the
+// controller can drive and toggle the menu without needing an app restart.
+static void EnsureImGuiHasGamepad() {
+    if (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad) {
+        return;
+    }
+    int numJoysticks = SDL_NumJoysticks();
+    for (int i = 0; i < numJoysticks; i++) {
+        if (SDL_IsGameController(i)) {
+            ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoFirst);
+            break;
+        }
+    }
+}
+
 extern "C" void Graph_StartFrame() {
 #ifndef __WIIU__
+    EnsureImGuiHasGamepad();
     using Ship::KbScancode;
     int32_t dwScancode = OTRGlobals::Instance->context->GetWindow()->GetLastScancode();
     OTRGlobals::Instance->context->GetWindow()->SetLastScancode(-1);
 
     switch (dwScancode) {
+        case KbScancode::LUS_KB_Q: {
+            // Ctrl+Q quits the game (Q alone does nothing here).
+            if (SDL_GetModState() & KMOD_CTRL) {
+                Ship::Context::GetRawInstance()->GetWindow()->Close();
+            }
+            break;
+        }
         case KbScancode::LUS_KB_F1: {
             std::shared_ptr<SohModalWindow> modal = static_pointer_cast<SohModalWindow>(
                 std::dynamic_pointer_cast<Fast::Fast3dGui>(Ship::Context::GetRawInstance()->GetWindow()->GetGui())
@@ -1903,6 +2031,14 @@ ImFont* OTRGlobals::CreateFontWithSize(float size, std::string fontPath, bool is
         fontCfg.PixelSnapH = true;
         fontCfg.SizePixels = size;
         font = mImGuiIo->Fonts->AddFontDefault(&fontCfg);
+    } else if (std::filesystem::exists(fontPath)) {
+        // Load a .ttf straight from disk (e.g. a custom pixel font dropped next to the app).
+        // Oversampling off + pixel snap keeps pixel-art fonts crisp instead of blurry.
+        ImFontConfig fontConf;
+        fontConf.OversampleH = fontConf.OversampleV = 1;
+        fontConf.PixelSnapH = true;
+        const ImWchar* glyph_ranges = isJapaneseFont ? mImGuiIo->Fonts->GetGlyphRangesJapanese() : nullptr;
+        font = mImGuiIo->Fonts->AddFontFromFileTTF(fontPath.c_str(), size, &fontConf, glyph_ranges);
     } else {
         auto initData = std::make_shared<Ship::ResourceInitData>();
         initData->Format = RESOURCE_FORMAT_BINARY;

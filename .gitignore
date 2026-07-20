@@ -48,6 +48,8 @@ graphs/
 
 # Assets
 *.png
+!config/sohIcon-512.png
+!soh/assets/custom/textures/crt/*.png
 *.jpg
 *.mdli
 *.anmi
@@ -417,6 +419,7 @@ tags
 *.sav
 shipofharkinian.ini
 shipofharkinian.json
+!config/shipofharkinian.json
 imgui.ini
 timesplitdata.json
 

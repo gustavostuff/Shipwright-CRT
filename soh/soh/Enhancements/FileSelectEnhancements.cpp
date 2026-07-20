@@ -1,8 +1,10 @@
 ﻿#include "FileSelectEnhancements.h"
 
 #include "soh/OTRGlobals.h"
+#include "soh/Enhancements/Presets/Presets.h"
 #include "soh/SohGui/SohModals.h"
 #include "soh/SohGui/SohGui.hpp"
+#include "soh/cvar_prefixes.h"
 
 #include <array>
 #include <string>
@@ -80,6 +82,22 @@ void SohFileSelect_DismissPresetModal() {
 }
 
 void SohFileSelect_ShowPresetModal() {
+    // CRT: apply Curated Randomizer enhancements once (status shown on the CRT Randomizer tab).
+    if (CVarGetInteger(CVAR_SETTING("CrtSimpleMenu"), 1)) {
+        if (!CVarGetInteger(CVAR_GENERAL("CrtAppliedCuratedRandoPreset"), 0)) {
+            static const std::string kCuratedRandoPreset = "Enhancements - Curated Randomizer";
+            for (const auto& name : GetPresetNames()) {
+                if (name == kCuratedRandoPreset) {
+                    applyPreset(kCuratedRandoPreset);
+                    break;
+                }
+            }
+            CVarSetInteger(CVAR_GENERAL("CrtAppliedCuratedRandoPreset"), 1);
+            CVarSetInteger(CVAR_GENERAL("HasSeenPresetModal"), 1);
+        }
+        return;
+    }
+
     if (CVarGetInteger(CVAR_GENERAL("HasSeenPresetModal"), 0)) {
         return;
     }

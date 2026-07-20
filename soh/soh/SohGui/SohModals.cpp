@@ -52,6 +52,9 @@ void SohModalWindow::DrawElement() {
                 ImGui::CloseCurrentPopup();
                 modals.erase(modals.begin());
             }
+            // Give the first button controller/keyboard nav focus when the popup opens, so a
+            // gamepad can act on these dialogs (e.g. the first-run "Generate O2R?" prompt) right away.
+            ImGui::SetItemDefaultFocus();
             UIWidgets::PopStyleButton();
             if (curModal.button2_ != "") {
                 ImGui::SameLine();

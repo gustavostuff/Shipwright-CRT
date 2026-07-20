@@ -47,6 +47,7 @@ graphs/
 
 # Assets
 *.png
+!assets/custom/textures/crt/*.png
 *.jpg
 *.mdli
 *.anmi

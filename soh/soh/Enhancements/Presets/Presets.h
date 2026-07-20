@@ -16,3 +16,7 @@ enum PresetSection {
 
 void DrawPresetSelector(std::vector<PresetSection> includeSections, std::string currentIndex, bool disabled);
 void applyPreset(std::string presetName, std::vector<PresetSection> includeSections = {});
+// CRT: expose the loaded preset names (map order = alphabetical) for the simple menu.
+std::vector<std::string> GetPresetNames();
+// CRT: true if the preset's enhancements block still matches current CVars.
+bool DoesPresetMatchCurrent(const std::string& presetName);

@@ -1,117 +1,70 @@
-![Ship of Harkinian](docs/shiptitle.darkmode.png#gh-dark-mode-only)
-![Ship of Harkinian](docs/shiptitle.lightmode.png#gh-light-mode-only)
+# Shipwright-CRT
+===============
 
-## Website
+A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) aimed at **320x240 CRT** play on Raspberry Pi Linux (specifically Debian-family images such as RGB-Pi), with a small controller-friendly settings UI.
 
-Official Website: https://www.shipofharkinian.com/
+## What you get
 
-## Discord
+- Simplified CRT menu (not the full upstream SoH settings UI)
+- Auto ROM to `oot.o2r` extraction on first launch
+- AppImage packages that embed `soh.o2r` and extractor `assets/`
 
-Official Discord: https://discord.com/invite/shipofharkinian
+You still need a **legally obtained** Ocarina of Time ROM (`.z64` / `.n64` / `.v64`).
 
-If you're having any trouble after reading through this `README`, feel free to ask for help in the Support text channels. Please keep in mind that we do not condone piracy.
+## CRT settings UI
 
-# Quick Start
+Upstream SoH has a large desktop-oriented menu. This fork uses a compact modal meant for a CRT and a gamepad (keyboard and mouse are still supported though). The CRT UI is **English-only for now**. Several settings UI controls will not be migrated, I'll try to keep it simple. For the full SoH feature set, see [Harbour Masters](https://github.com/HarbourMasters/Shipwright).
 
-The Ship does not include any copyrighted assets.  You are required to provide a supported copy of the game.
+## Build (AppImage)
 
-### 1. Verify your ROM dump
-You can verify you have dumped a supported copy of the game by using the compatibility checker at https://ship.equipment/. If you'd prefer to manually validate your ROM dump, you can cross-reference its `sha1` hash with the hashes [here](docs/supportedHashes.json).
-
-### 2. Download The Ship of Harkinian from [Releases](https://github.com/HarbourMasters/Shipwright/releases)
-
-### 3. Launch the Game!
-#### Windows
-* Extract the zip
-* Launch `soh.exe`
-
-#### Linux
-* Place your supported copy of the game in the same folder as the appimage.
-* Execute `soh.appimage`.  You may have to `chmod +x` the appimage via terminal.
-
-#### macOS
-* Run `soh.app`. When prompted, select your supported copy of the game.
-* You should see a notification saying `Processing OTR`, then, once the process is complete, you should get a notification saying `OTR Successfully Generated`, then the game should start.
-
-#### Nintendo Switch
-* Run one of the PC releases to generate an `oot.o2r` and/or `oot-mq.o2r` file. After launching the game on PC, you will be able to find these files in the same directory as `soh.exe` or `soh.appimage`. On macOS, these files can be found in `/Users/<username>/Library/Application Support/com.shipofharkinian.soh/`
-* Copy the files to your sd card
+```bash
+git clone --recursive https://github.com/gustavostuff/Shipwright-CRT.git
+cd Shipwright-CRT
+./scripts/linux/appimage/build.sh
 ```
-sdcard
-└── switch
-    └── soh
-        ├── oot-mq.o2r
-        ├── oot.o2r
-        ├── soh.nro
-        └── soh.o2r
+
+Works on **x86_64 PC** and **aarch64 Pi** (linuxdeploy is selected for the host arch). This is a **native** build only: there is no cross-compile from a PC to the Pi.
+
+Use `HOST_TARGET` to pick the sidecar config written next to the AppImage:
+
+```bash
+# Develop / test on a normal Linux PC (windowed 320x240), no CRT or Pi required.
+# Handy for trying menu changes and other fork tweaks.
+HOST_TARGET=pc ./scripts/linux/appimage/build.sh
+
+# Build on the Pi itself (e.g. over an SSH session). Not a PC cross-build.
+# Produces the fullscreen CRT / Pi AppImage.
+HOST_TARGET=pi ./scripts/linux/appimage/build.sh
 ```
-* Launch via Atmosphere's `Game+R` launcher method.
 
-### 4. Play!
+If `HOST_TARGET` is omitted, Pi arches (`aarch64` / `arm64`) default to `pi`, otherwise `pc`. On a PC use `HOST_TARGET=pc` (or the default) to iterate on the UI. When you are ready for glass, clone or sync the tree onto the Pi and run `HOST_TARGET=pi` there.
 
-Congratulations, you are now sailing with the Ship of Harkinian! Have fun!
+Output lands in `_packages/`:
 
-# Configuration
+| Target | AppImage |
+|--------|----------|
+| `pc` (default on x86_64) | `soh-pc.AppImage` |
+| `pi` (default on aarch64) | `soh-raspberry-pi.AppImage` |
 
-### Default keyboard configuration
-| N64 | A | B | Z | Start | Analog stick | C buttons | D-Pad |
-| - | - | - | - | - | - | - | - |
-| Keyboard | X | C | Z | Space | WASD | Arrow keys | TFGH |
+Plus `shipofharkinian.json` and `proggy-tiny.ttf` beside it.
 
-### Other shortcuts
-| Keys | Action |
-| - | - |
-| ESC | Toggle menu |
-| F2 | Toggle capture mouse input |
-| F5 | Save state |
-| F6 | Change state |
-| F7 | Load state |
-| F9 | Toggle Text-to-Speech (Windows and Mac only) |
-| F11 | Fullscreen |
-| Tab | Toggle Alternate assets |
-| Ctrl+R | Reset |
+## Run
 
-# Project Overview
-Ship of Harkinian (SOH) is built atop a custom library dubbed libultraship (LUS). Back in the N64 days, there was an SDK distributed to developers named libultra; LUS is designed to mimic the functionality of libultra on modern hardware. In addition, we are dependant on the source code provided by the OOT decompilation project.
+```bash
+cd _packages
+# put your OoT ROM in this folder
+chmod +x soh-pc.AppImage   # or soh-raspberry-pi.AppImage
+./soh-pc.AppImage
+```
 
-In order for the game to function, you will require a **legally acquired** ROM for Ocarina of Time. Click [here](https://ship.equipment/) to check the compatibility of your specific rom. Any copyrighted assets are extracted from the ROM and reformatted as a .o2r archive file which the code uses.
+If the AppImage cannot mount (common without FUSE):
 
-### Graphics Backends
-Currently, there are three rendering APIs supported: DirectX11 (Windows), OpenGL (all platforms), and Metal (MacOS). You can change which API to use in the `Settings` menu of the menubar, which requires a restart.  If you're having an issue with crashing, you can change the API in the `shipofharkinian.json` file by finding the line `gfxbackend:""` and changing the value to `sdl` for OpenGL. DirectX 11 is the default on Windows.
+```bash
+APPIMAGE_EXTRACT_AND_RUN=1 ./soh-pc.AppImage
+```
 
-# Custom Assets
+First launch extracts `oot.o2r` beside the AppImage. There is no external `assets/` folder.
 
-Custom assets are packed in `.otr` archive files. To use custom assets, place them in the `mods` folder.
+## License / upstream
 
-If you're interested in creating and/or packing your own custom asset `.otr` files, check out the following tools:
-* [**retro - OTR generator**](https://github.com/HarbourMasters64/retro)
-* [**fast64 - Blender plugin**](https://github.com/HarbourMasters/fast64)
-
-# Development
-### Building
-
-If you want to manually compile SoH, please consult the [building instructions](docs/BUILDING.md).
-
-### Playtesting
-If you want to playtest a continuous integration build, you can find them at the links below. Keep in mind that these are for playtesting only, and you will likely encounter bugs and possibly crashes. 
-
-* [Windows](https://nightly.link/HarbourMasters/Shipwright/workflows/generate-builds/develop/soh-windows.zip)
-* [macOS](https://nightly.link/HarbourMasters/Shipwright/workflows/generate-builds/develop/soh-mac.zip)
-* [Linux](https://nightly.link/HarbourMasters/Shipwright/workflows/generate-builds/develop/soh-linux.zip)
-
-### Further Reading
-More detailed documentation can be found in the 'docs' directory, including the aforementioned [building instructions](docs/BUILDING.md).
-
-* [Credits](docs/CREDITS.md)
-* [Custom Music](docs/CUSTOM_MUSIC.md)
-* [Formatting](docs/FORMATTING.md)
-* [Controller Mapping](docs/GAME_CONTROLLER_DB.md)
-* [Modding](docs/MODDING.md)
-* [Versioning](docs/VERSIONING.md)
-
-<a href="https://github.com/Kenix3/libultraship/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./docs/poweredbylus.darkmode.png">
-    <img alt="Powered by libultraship" src="./docs/poweredbylus.lightmode.png">
-  </picture>
-</a>
+Follows Ship of Harkinian / Harbour Masters terms. Do not redistribute copyrighted ROMs.
