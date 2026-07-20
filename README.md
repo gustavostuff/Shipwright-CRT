@@ -17,29 +17,44 @@ Upstream SoH has a large desktop-oriented menu. This fork uses a compact modal m
 
 ## Build (AppImage)
 
+### PC
+
 ```bash
 git clone --recursive https://github.com/gustavostuff/Shipwright-CRT.git
 cd Shipwright-CRT
-./scripts/linux/appimage/build.sh
+HOST_TARGET=pc ./scripts/linux/appimage/build.sh
 ```
 
-Works on **x86_64 PC** and **aarch64 Pi** (linuxdeploy is selected for the host arch). This is a **native** build only: there is no cross-compile from a PC to the Pi.
+### Raspberry Pi
 
-Use `HOST_TARGET` to pick the sidecar config written next to the AppImage:
+The Pi rootfs is usually too small to clone and compile. **Do not** `git clone` into `/home/pi`. Instead, keep an ext4 loop image (default `/media/sd/soh-build.img`), and let the build script mount it, clone onto it, and build there:
 
 ```bash
-# Develop / test on a normal Linux PC (windowed 320x240), no CRT or Pi required.
-# Handy for trying menu changes and other fork tweaks.
-HOST_TARGET=pc ./scripts/linux/appimage/build.sh
+# One-time: free a failed rootfs clone if you already hit "No space left on device"
+rm -rf ~/Shipwright-CRT
 
-# Build on the Pi itself (e.g. over an SSH session). Not a PC cross-build.
-# Produces the fullscreen CRT / Pi AppImage.
-HOST_TARGET=pi ./scripts/linux/appimage/build.sh
+# Bootstrap the build script (no full tree on the rootfs)
+curl -fsSL https://raw.githubusercontent.com/gustavostuff/Shipwright-CRT/main/scripts/linux/appimage/build.sh \
+  -o /tmp/soh-crt-build.sh
+chmod +x /tmp/soh-crt-build.sh
+
+# Mounts ~/soh-build, clones into ~/soh-build/Shipwright-CRT, then builds
+HOST_TARGET=pi /tmp/soh-crt-build.sh
+# Optional non-interactive sudo for the loop mount:
+# SUDO_PWD='yourpassword' HOST_TARGET=pi /tmp/soh-crt-build.sh
 ```
 
-If `HOST_TARGET` is omitted, Pi arches (`aarch64` / `arm64`) default to `pi`, otherwise `pc`. On a PC use `HOST_TARGET=pc` (or the default) to iterate on the UI. When you are ready for glass, clone or sync the tree onto the Pi and run `HOST_TARGET=pi` there.
+Later rebuilds (tree already on the image):
 
-Output lands in `_packages/`:
+```bash
+HOST_TARGET=pi ~/soh-build/Shipwright-CRT/scripts/linux/appimage/build.sh
+```
+
+Overrides: `SOH_BUILD_IMG`, `SOH_BUILD_MOUNT`, `SOH_BUILD_TREE`, `SOH_GIT_URL`, `SUDO_PWD`.
+
+This is a **native** build only (no PC→Pi cross-compile). If `HOST_TARGET` is omitted, Pi arches default to `pi`, otherwise `pc`.
+
+Output lands in `_packages/` (on the Pi that is under the mounted tree):
 
 | Target | AppImage |
 |--------|----------|

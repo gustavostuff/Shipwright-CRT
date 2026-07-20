@@ -2,18 +2,29 @@
 #
 # Build Ship of Harkinian CRT as a Linux AppImage (PC or Pi).
 #
-# Usage (from repo root, or any cwd; script cds to root):
+# Usage:
+#   # PC (from a normal checkout):
 #   ./scripts/linux/appimage/build.sh
-#   HOST_TARGET=pc ./scripts/linux/appimage/build.sh   # windowed 320x240 sidecar config
-#   HOST_TARGET=pi ./scripts/linux/appimage/build.sh   # fullscreen; run ON the Pi (e.g. SSH)
+#   HOST_TARGET=pc ./scripts/linux/appimage/build.sh
+#
+#   # Pi (run ON the Pi). Do NOT git-clone onto the tiny rootfs.
+#   # Mounts /media/sd/soh-build.img -> ~/soh-build, clones into that image,
+#   # then builds there. Bootstrap from /tmp if you have no checkout yet:
+#   curl -fsSL https://raw.githubusercontent.com/gustavostuff/Shipwright-CRT/main/scripts/linux/appimage/build.sh \
+#     -o /tmp/soh-crt-build.sh && chmod +x /tmp/soh-crt-build.sh
+#   HOST_TARGET=pi /tmp/soh-crt-build.sh
+#   # or, if already on the image checkout:
+#   HOST_TARGET=pi ./scripts/linux/appimage/build.sh
 #
 # Native build only: no PC -> Pi cross-compile. If HOST_TARGET is unset,
 # aarch64/arm64 => pi, otherwise => pc.
 #
-# Pi disk space: HOST_TARGET=pi mounts an ext4 loop image before building
-# (default /media/sd/soh-build.img -> ~/soh-build). Override with SOH_BUILD_IMG /
-# SOH_BUILD_MOUNT. Pass SUDO_PWD=... to avoid an interactive sudo prompt.
-# Keep the repo (and build-cmake/) under that mount so object files use the image.
+# Pi env overrides:
+#   SOH_BUILD_IMG    loop image (default /media/sd/soh-build.img)
+#   SOH_BUILD_MOUNT  mount point (default ~/soh-build)
+#   SOH_BUILD_TREE   clone/build dir (default $SOH_BUILD_MOUNT/Shipwright-CRT)
+#   SOH_GIT_URL      clone URL (default github.com/gustavostuff/Shipwright-CRT.git)
+#   SUDO_PWD         piped to sudo -S for the loop mount (no prompt)
 #
 # Output: _packages/soh-pc.AppImage or soh-raspberry-pi.AppImage
 #         plus shipofharkinian.json and proggy-tiny.ttf beside it.
@@ -21,11 +32,13 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-cd "$ROOT"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-CONFIG_DIR="$ROOT/config"
-PACKAGES="$ROOT/_packages"
+# If this file lives in a real checkout, remember that path (may be on a full rootfs).
+INVOKED_ROOT=""
+if [ -f "$SCRIPT_DIR/../../../CMakeLists.txt" ] && [ -d "$SCRIPT_DIR/../../../soh" ]; then
+    INVOKED_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+fi
 
 HOST_ARCH="$(uname -m)"
 if [ -z "${HOST_TARGET:-}" ]; then
@@ -41,6 +54,11 @@ case "$HOST_TARGET" in
         WIN_W=320
         WIN_H=240
         APPIMAGE_NAME="soh-pc.AppImage"
+        if [ -z "$INVOKED_ROOT" ]; then
+            echo "ERROR: on PC, run this script from a Shipwright-CRT checkout." >&2
+            exit 2
+        fi
+        ROOT="$INVOKED_ROOT"
         ;;
     pi)
         case "$HOST_ARCH" in
@@ -55,6 +73,63 @@ case "$HOST_TARGET" in
         WIN_W=
         WIN_H=
         APPIMAGE_NAME="soh-raspberry-pi.AppImage"
+
+        # Rootfs is too small for clone+build. Use a loop-mounted ext4 image.
+        IMG="${SOH_BUILD_IMG:-/media/sd/soh-build.img}"
+        MOUNT="${SOH_BUILD_MOUNT:-$HOME/soh-build}"
+        TREE="${SOH_BUILD_TREE:-$MOUNT/Shipwright-CRT}"
+        GIT_URL="${SOH_GIT_URL:-https://github.com/gustavostuff/Shipwright-CRT.git}"
+
+        if [ ! -f "$IMG" ]; then
+            echo "ERROR: Pi build image not found: $IMG" >&2
+            echo "       Place an ext4 image there, or set SOH_BUILD_IMG / SOH_BUILD_MOUNT." >&2
+            exit 1
+        fi
+        if ! mountpoint -q "$MOUNT"; then
+            echo ">> Mounting build image $IMG -> $MOUNT ..."
+            mkdir -p "$MOUNT"
+            if [ -n "${SUDO_PWD:-}" ]; then
+                echo "$SUDO_PWD" | sudo -S mount -o loop "$IMG" "$MOUNT"
+            else
+                sudo mount -o loop "$IMG" "$MOUNT"
+            fi
+        else
+            echo ">> Build image already mounted at $MOUNT"
+        fi
+
+        # Prefer an already-complete tree on the image; otherwise clone there.
+        if [ -n "$INVOKED_ROOT" ] && [[ "$INVOKED_ROOT" == "$MOUNT"/* ]] &&
+            [ -f "$INVOKED_ROOT/libultraship/CMakeLists.txt" ]; then
+            TREE="$INVOKED_ROOT"
+            echo ">> Using checkout on build image: $TREE"
+        elif [ -f "$TREE/libultraship/CMakeLists.txt" ]; then
+            echo ">> Using existing tree on build image: $TREE"
+        else
+            if [ -n "$INVOKED_ROOT" ] && [ -d "$INVOKED_ROOT/.git" ]; then
+                GIT_URL="$(git -C "$INVOKED_ROOT" remote get-url origin 2>/dev/null || echo "$GIT_URL")"
+            fi
+            if [ -d "$TREE/.git" ]; then
+                echo ">> Completing incomplete checkout at $TREE ..."
+                git -C "$TREE" submodule update --init --recursive
+            else
+                echo ">> Cloning into $TREE (on build image; avoids filling the rootfs) ..."
+                rm -rf "$TREE"
+                git clone --recursive "$GIT_URL" "$TREE"
+            fi
+        fi
+
+        if [ ! -f "$TREE/libultraship/CMakeLists.txt" ]; then
+            echo "ERROR: tree at $TREE is still missing libultraship after clone/update." >&2
+            exit 1
+        fi
+
+        if [ -n "$INVOKED_ROOT" ] && [[ "$INVOKED_ROOT" != "$MOUNT"/* ]]; then
+            echo "WARNING: you also have a checkout outside the build image: $INVOKED_ROOT" >&2
+            echo "         That is what usually fills the Pi rootfs. After this build succeeds," >&2
+            echo "         free space with:  rm -rf '$INVOKED_ROOT'" >&2
+        fi
+
+        ROOT="$TREE"
         ;;
     *)
         echo "ERROR: HOST_TARGET must be pc or pi (got: $HOST_TARGET)" >&2
@@ -62,37 +137,12 @@ case "$HOST_TARGET" in
         ;;
 esac
 
-echo ">> Shipwright-CRT AppImage build (HOST_TARGET=$HOST_TARGET, arch=$HOST_ARCH)"
+cd "$ROOT"
+CONFIG_DIR="$ROOT/config"
+PACKAGES="$ROOT/_packages"
 
-# Pi rootfs is tight; CRT builds keep the tree on a loop-mounted ext4 image
-# (same layout as crt-overlay deploy: /media/sd/soh-build.img -> ~/soh-build).
-if [ "$HOST_TARGET" = pi ]; then
-    IMG="${SOH_BUILD_IMG:-/media/sd/soh-build.img}"
-    MOUNT="${SOH_BUILD_MOUNT:-$HOME/soh-build}"
-    if [ ! -f "$IMG" ]; then
-        echo "ERROR: Pi build image not found: $IMG" >&2
-        echo "       Place an ext4 image there, or set SOH_BUILD_IMG / SOH_BUILD_MOUNT." >&2
-        exit 1
-    fi
-    if ! mountpoint -q "$MOUNT"; then
-        echo ">> Mounting build image $IMG -> $MOUNT ..."
-        mkdir -p "$MOUNT"
-        if [ -n "${SUDO_PWD:-}" ]; then
-            echo "$SUDO_PWD" | sudo -S mount -o loop "$IMG" "$MOUNT"
-        else
-            sudo mount -o loop "$IMG" "$MOUNT"
-        fi
-    else
-        echo ">> Build image already mounted at $MOUNT"
-    fi
-    case "$ROOT" in
-        "$MOUNT"/*) ;;
-        *)
-            echo "WARNING: repo is at $ROOT, but the space-saving image is at $MOUNT." >&2
-            echo "         Prefer building under $MOUNT so cmake output uses the image." >&2
-            ;;
-    esac
-fi
+echo ">> Shipwright-CRT AppImage build (HOST_TARGET=$HOST_TARGET, arch=$HOST_ARCH)"
+echo ">> Tree: $ROOT"
 
 if [ ! -f "$ROOT/libultraship/CMakeLists.txt" ]; then
     echo ">> Initializing submodules..."
