@@ -48,7 +48,9 @@ graphs/
 # Assets
 *.png
 !assets/custom/textures/crt/*.png
+!assets/readme_images/*.png
 *.jpg
+!assets/readme_images/*.jpg
 *.mdli
 *.anmi
 *.obj
