@@ -6,9 +6,9 @@ A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) for 
 ![](soh/assets/readme_images/settings.png) ![](soh/assets/readme_images/controllers.png)
 ![](soh/assets/readme_images/enhancements.png) ![](soh/assets/readme_images/randomizer.png)
 
-**Play target:** Raspberry Pi Linux images in general (RGB-Pi, Batocera, Lakka, RetroPie, Recalbox, and similar). Drop in a release AppImage; you should not need to compile.
+**Play target:** Raspberry Pi Linux images in general (RGB-Pi, Batocera, Lakka, RetroPie, Recalbox, and similar). Drop in a release AppImage.
 
-**Build / deploy scripts:** aimed at [RGB-Pi OS4](https://www.rgb-pi.com/) (paths like `/media/sd/soh-build.img`, SSH user `pi`, etc.). You can also build and test on a normal Linux PC (`HOST_TARGET=pc`). Compiling on other frontend images is not supported by these scripts.
+**Build / deploy scripts:** aimed at [RGB-Pi OS4](https://www.rgb-pi.com/) (paths like `/media/sd/soh-build.img`, SSH user `pi`, etc.). You can also build and test on a normal Linux PC (`HOST_TARGET=pc`). Compiling on other frontend images is not currently supported by these scripts.
 
 ## Download (no build required)
 
