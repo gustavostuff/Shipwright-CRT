@@ -44,10 +44,10 @@ HOST_TARGET=pc ./scripts/linux/appimage/build.sh
 
 | HOST_TARGET | Output |
 |--------|--------|
-| `pc` | `_packages/build-linux-x86_64/` — `soh-pc.AppImage` + `soh-pc-<version>.zip` |
-| `pi` | `_packages/build-linux-arm64/` — `soh-raspberry-pi.AppImage` + `soh-raspberry-pi-<version>.zip` |
+| `pc` | `_packages/build-linux-x86_64/soh-pc-<version>.zip` |
+| `pi` | `_packages/build-linux-arm64/soh-raspberry-pi-<version>.zip` |
 
-AppImage names stay stable so launch scripts need not change. Versioned zips are the release artifacts (AppImage, `shipofharkinian.json`, Proggy Tiny). CRT fork version lives in `CRT_VERSION` (currently `0.0.2`), unrelated to upstream SoH.
+Zips contain a stable-named AppImage (`soh-pc.AppImage` / `soh-raspberry-pi.AppImage`), `shipofharkinian.json`, and Proggy Tiny. CRT fork version lives in `CRT_VERSION` (currently `0.0.2`), unrelated to upstream SoH.
 
 ## License
 

@@ -3,8 +3,8 @@
 # deploy-on-pi.sh — run on your PC from a Shipwright-CRT checkout.
 #
 # Syncs this tree to the Pi (no git clone on the Pi), mounts the Pi build
-# image, builds the aarch64 AppImage there, and copies it (plus the versioned
-# release zip) back to ./_packages/build-linux-arm64/.
+# image, builds the aarch64 release zip there, and copies it back to
+# ./_packages/build-linux-arm64/.
 #
 # Usage:
 #   ./scripts/linux/deploy-on-pi.sh IP=192.168.1.10 USER=pi PASS=secret
@@ -154,19 +154,13 @@ if [ ! -f "$ROOT/CRT_VERSION" ]; then
     exit 1
 fi
 CRT_VERSION="$(tr -d '[:space:]' < "$ROOT/CRT_VERSION")"
-APPIMAGE_NAME="soh-raspberry-pi.AppImage"
 RELEASE_ZIP="soh-raspberry-pi-${CRT_VERSION}.zip"
 
-echo ">> Copying Pi package back to $LOCAL_OUT ..."
+echo ">> Copying Pi release zip back to $LOCAL_OUT ..."
 mkdir -p "$LOCAL_OUT"
-scppi "${REMOTE}:${REMOTE_OUT}/${APPIMAGE_NAME}" "$LOCAL_OUT/"
-scppi "${REMOTE}:${REMOTE_OUT}/shipofharkinian.json" "$LOCAL_OUT/"
-scppi "${REMOTE}:${REMOTE_OUT}/proggy-tiny.ttf" "$LOCAL_OUT/"
-scppi "${REMOTE}:${REMOTE_OUT}/proggy-tiny-licence.txt" "$LOCAL_OUT/"
-scppi "${REMOTE}:${REMOTE_OUT}/${RELEASE_ZIP}" "$LOCAL_OUT/"
-chmod +x "$LOCAL_OUT/${APPIMAGE_NAME}" 2>/dev/null || true
 # Keep only the current release zip locally.
 find "$LOCAL_OUT" -maxdepth 1 -type f -name 'soh-raspberry-pi-*.zip' ! -name "$RELEASE_ZIP" -delete 2>/dev/null || true
+scppi "${REMOTE}:${REMOTE_OUT}/${RELEASE_ZIP}" "$LOCAL_OUT/"
 
 echo
 echo ">> Done."

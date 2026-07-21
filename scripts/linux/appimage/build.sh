@@ -27,10 +27,10 @@
 #   SOH_GIT_URL         clone URL (default github.com/gustavostuff/Shipwright-CRT.git)
 #   SUDO_PWD            piped to sudo -S for the loop mount (no prompt)
 #
-# Output (under _packages/):
-#   HOST_TARGET=pc  -> build-linux-x86_64/soh-pc.AppImage + soh-pc-<CRT_VERSION>.zip
-#   HOST_TARGET=pi  -> build-linux-arm64/soh-raspberry-pi.AppImage + soh-raspberry-pi-<CRT_VERSION>.zip
-#   Zip holds the AppImage (stable name), shipofharkinian.json, and Proggy Tiny files.
+# Output (under _packages/): only the versioned release zip
+#   HOST_TARGET=pc  -> build-linux-x86_64/soh-pc-<CRT_VERSION>.zip
+#   HOST_TARGET=pi  -> build-linux-arm64/soh-raspberry-pi-<CRT_VERSION>.zip
+# Zip contents: AppImage (stable name), shipofharkinian.json, Proggy Tiny files.
 #
 
 set -euo pipefail
@@ -263,10 +263,17 @@ find "$PACKAGES" -maxdepth 1 -type f -name "${APPIMAGE_BASENAME}-*.zip" -delete 
         proggy-tiny.ttf \
         proggy-tiny-licence.txt
 )
+# Final artifact is the zip only (AppImage name stays stable inside the archive).
+rm -f "$PACKAGES/$APPIMAGE_NAME" \
+    "$PACKAGES/shipofharkinian.json" \
+    "$PACKAGES/proggy-tiny.ttf" \
+    "$PACKAGES/proggy-tiny-licence.txt"
+# Drop leftover unpackaged AppImages from earlier builds.
+find "$PACKAGES" -maxdepth 1 -type f -name "${APPIMAGE_BASENAME}*.AppImage" -delete 2>/dev/null || true
 
 echo
 echo ">> Done."
 ls -lah "$PACKAGES"
 echo "   Release zip: $PACKAGES/$RELEASE_ZIP"
-echo "   Run from $PACKAGES with a legal OoT ROM beside the AppImage."
-echo "   If FUSE is unavailable: APPIMAGE_EXTRACT_AND_RUN=1 ./$(basename "$APPIMAGE")"
+echo "   Unpack it, put a legal OoT ROM beside the AppImage, then run."
+echo "   If FUSE is unavailable: APPIMAGE_EXTRACT_AND_RUN=1 ./$APPIMAGE_NAME"
