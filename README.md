@@ -2,9 +2,9 @@
 
 A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) for **320x240 CRT** play, with a small controller-friendly settings UI.
 
-|---|---|
-| ![](soh/assets/readme_images/settings.png) | ![](soh/assets/readme_images/controllers.png) |
-| ![](soh/assets/readme_images/enhancements.png) | ![](soh/assets/readme_images/randomizer.png) |
+
+![](soh/assets/readme_images/settings.png) ![](soh/assets/readme_images/controllers.png)
+![](soh/assets/readme_images/enhancements.png) ![](soh/assets/readme_images/randomizer.png)
 
 **Play target:** Raspberry Pi Linux images in general (RGB-Pi, Batocera, Lakka, RetroPie, Recalbox, and similar). Drop in a release AppImage; you should not need to compile.
 
