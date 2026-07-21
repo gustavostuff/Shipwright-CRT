@@ -10,7 +10,7 @@ A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) for 
 
 **Build / deploy scripts:** aimed at [RGB-Pi OS4](https://www.rgb-pi.com/) (paths like `/media/sd/soh-build.img`, SSH user `pi`, etc.). You can also build and test on a normal Linux PC (`HOST_TARGET=pc`). Compiling on other frontend images is not currently supported by these scripts.
 
-## Download (no build required)
+## Download
 
 Grab a prebuilt release zip from the GitHub [Releases](https://github.com/gustavostuff/Shipwright-CRT/releases) page. Unpack it; inside is a folder with the Pi AppImage and the other files you need. Drop that folder onto your Pi image, add a legal OoT ROM, and run. You do **not** need to compile for normal use.
 
