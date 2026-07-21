@@ -2,7 +2,6 @@
 
 A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) for **320x240 CRT** play, with a small controller-friendly settings UI.
 
-| | |
 |---|---|
 | ![](soh/assets/readme_images/settings.png) | ![](soh/assets/readme_images/controllers.png) |
 | ![](soh/assets/readme_images/enhancements.png) | ![](soh/assets/readme_images/randomizer.png) |
