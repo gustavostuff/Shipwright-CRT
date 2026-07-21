@@ -9,9 +9,12 @@
 # Or copy this file over with scp and run it.
 #
 # Env overrides: SOH_BUILD_IMG, SOH_BUILD_MOUNT, SOH_BUILD_TREE, SOH_GIT_URL, SUDO_PWD
+#                SOH_BUILD_IMG_SIZE (default 8G; image is created if missing)
 #
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 IMG="${SOH_BUILD_IMG:-/media/sd/soh-build.img}"
 MOUNT="${SOH_BUILD_MOUNT:-$HOME/soh-build}"
@@ -19,22 +22,7 @@ TREE="${SOH_BUILD_TREE:-$MOUNT/Shipwright-CRT}"
 GIT_URL="${SOH_GIT_URL:-https://github.com/gustavostuff/Shipwright-CRT.git}"
 BRANCH="${SOH_GIT_BRANCH:-develop}"
 
-if [ ! -f "$IMG" ]; then
-    echo "ERROR: build image not found: $IMG" >&2
-    exit 1
-fi
-
-if ! mountpoint -q "$MOUNT"; then
-    echo ">> Mounting $IMG -> $MOUNT ..."
-    mkdir -p "$MOUNT"
-    if [ -n "${SUDO_PWD:-}" ]; then
-        echo "$SUDO_PWD" | sudo -S mount -o loop "$IMG" "$MOUNT"
-    else
-        sudo mount -o loop "$IMG" "$MOUNT"
-    fi
-else
-    echo ">> Already mounted: $MOUNT"
-fi
+bash "$SCRIPT_DIR/ensure-pi-build-img.sh"
 
 echo ">> Mount info:"
 findmnt "$MOUNT" || true

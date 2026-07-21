@@ -3,7 +3,8 @@
 # deploy-on-pi.sh — run on your PC from a Shipwright-CRT checkout.
 #
 # Syncs this tree to the Pi (no git clone on the Pi), mounts the Pi build
-# image, builds the aarch64 AppImage there, and copies it back to ./_packages/.
+# image, builds the aarch64 AppImage there, and copies it (plus the versioned
+# release zip) back to ./_packages/build-linux-arm64/.
 #
 # Usage:
 #   ./scripts/linux/deploy-on-pi.sh IP=192.168.1.10 USER=pi PASS=secret
@@ -12,7 +13,7 @@
 # Optional: --no-build (sync only), SUDO_PWD=... (defaults to PASS for loop mount).
 #
 # Requires on the PC: sshpass, and either rsync or tar.
-# Pi expects: /media/sd/soh-build.img (same as scripts/linux/appimage/build.sh).
+# Pi build image: /media/sd/soh-build.img (created automatically if missing).
 #
 
 set -euo pipefail
@@ -73,24 +74,21 @@ REMOTE="${PI_USER}@${PI_IP}"
 IMG="${SOH_BUILD_IMG:-/media/sd/soh-build.img}"
 MOUNT="${SOH_BUILD_MOUNT:-/home/${PI_USER}/soh-build}"
 TREE="${SOH_BUILD_TREE:-${MOUNT}/Shipwright-CRT}"
-LOCAL_OUT="$ROOT/_packages"
+REMOTE_OUT="${TREE}/_packages/build-linux-arm64"
+LOCAL_OUT="$ROOT/_packages/build-linux-arm64"
 
 echo ">> Target: $REMOTE"
 echo ">> Remote tree: $TREE"
 
-echo ">> Ensuring build image is mounted on the Pi..."
-sshpi "set -e
-if [ ! -f '$IMG' ]; then
-  echo \"ERROR: missing $IMG on the Pi\" >&2
-  exit 1
-fi
-mkdir -p '$MOUNT'
-if ! mountpoint -q '$MOUNT'; then
-  echo '$SUDO_PWD' | sudo -S mount -o loop '$IMG' '$MOUNT'
-else
-  echo 'Already mounted'
-fi
-mkdir -p '$TREE'
+echo ">> Ensuring build image exists and is mounted on the Pi..."
+# Copy helper first so we can create the image before the tree sync.
+scppi "$ROOT/scripts/linux/ensure-pi-build-img.sh" "${REMOTE}:/tmp/ensure-pi-build-img.sh"
+sshpi "export SOH_BUILD_IMG=$(printf '%q' "$IMG")
+export SOH_BUILD_MOUNT=$(printf '%q' "$MOUNT")
+export SOH_BUILD_IMG_SIZE=$(printf '%q' "${SOH_BUILD_IMG_SIZE:-8G}")
+export SUDO_PWD=$(printf '%q' "$SUDO_PWD")
+bash /tmp/ensure-pi-build-img.sh
+mkdir -p $(printf '%q' "$TREE")
 "
 
 echo ">> Syncing sources to the Pi (excludes .git / build-cmake / _packages)..."
@@ -151,15 +149,27 @@ cd $(printf '%q' "$TREE")
 bash ./scripts/linux/appimage/build.sh
 "
 
-echo ">> Copying Pi AppImage + sidecars back to $LOCAL_OUT ..."
+if [ ! -f "$ROOT/CRT_VERSION" ]; then
+    echo "ERROR: missing $ROOT/CRT_VERSION" >&2
+    exit 1
+fi
+CRT_VERSION="$(tr -d '[:space:]' < "$ROOT/CRT_VERSION")"
+APPIMAGE_NAME="soh-raspberry-pi.AppImage"
+RELEASE_ZIP="soh-raspberry-pi-${CRT_VERSION}.zip"
+
+echo ">> Copying Pi package back to $LOCAL_OUT ..."
 mkdir -p "$LOCAL_OUT"
-scppi "${REMOTE}:${TREE}/_packages/soh-raspberry-pi.AppImage" "$LOCAL_OUT/"
-scppi "${REMOTE}:${TREE}/_packages/shipofharkinian.json" "$LOCAL_OUT/shipofharkinian.pi.json"
-scppi "${REMOTE}:${TREE}/_packages/proggy-tiny.ttf" "$LOCAL_OUT/"
-scppi "${REMOTE}:${TREE}/_packages/proggy-tiny-licence.txt" "$LOCAL_OUT/"
-chmod +x "$LOCAL_OUT/soh-raspberry-pi.AppImage" 2>/dev/null || true
+scppi "${REMOTE}:${REMOTE_OUT}/${APPIMAGE_NAME}" "$LOCAL_OUT/"
+scppi "${REMOTE}:${REMOTE_OUT}/shipofharkinian.json" "$LOCAL_OUT/"
+scppi "${REMOTE}:${REMOTE_OUT}/proggy-tiny.ttf" "$LOCAL_OUT/"
+scppi "${REMOTE}:${REMOTE_OUT}/proggy-tiny-licence.txt" "$LOCAL_OUT/"
+scppi "${REMOTE}:${REMOTE_OUT}/${RELEASE_ZIP}" "$LOCAL_OUT/"
+chmod +x "$LOCAL_OUT/${APPIMAGE_NAME}" 2>/dev/null || true
+# Keep only the current release zip locally.
+find "$LOCAL_OUT" -maxdepth 1 -type f -name 'soh-raspberry-pi-*.zip' ! -name "$RELEASE_ZIP" -delete 2>/dev/null || true
 
 echo
 echo ">> Done."
-ls -lah "$LOCAL_OUT/soh-raspberry-pi.AppImage" "$LOCAL_OUT/shipofharkinian.pi.json" "$LOCAL_OUT/proggy-tiny.ttf" "$LOCAL_OUT/proggy-tiny-licence.txt"
-echo "   Pi fullscreen config saved as shipofharkinian.pi.json (PC builds keep shipofharkinian.json)."
+ls -lah "$LOCAL_OUT"
+echo "   Release zip: $LOCAL_OUT/$RELEASE_ZIP"
+echo "   PC builds land in _packages/build-linux-x86_64/."

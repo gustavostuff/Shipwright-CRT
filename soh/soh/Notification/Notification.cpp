@@ -46,7 +46,8 @@ void Window::Draw() {
     ImGui::PushStyleColor(ImGuiCol_WindowBg,
                           ImVec4(0, 0, 0, CVarGetFloat(CVAR_SETTING("Notifications.BgOpacity"), 0.5f)));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 3.0f));
 
     for (int index = 0; index < notifications.size(); ++index) {
         auto& notification = notifications[index];
@@ -65,7 +66,9 @@ void Window::Draw() {
                          ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
 
-        ImGui::SetWindowFontScale(CVarGetFloat(CVAR_SETTING("Notifications.Size"), 1.8f)); // Make this adjustable
+        // CRT: UI default font is Proggy Tiny at 10px (see OTRGlobals kUiFontSize). Keep scale 1.0
+        // so notifications stay crisp instead of the old 1.8x blurry upscale.
+        ImGui::SetWindowFontScale(1.0f);
 
         ImVec2 notificationPos;
         switch (position) {
@@ -107,14 +110,25 @@ void Window::Draw() {
         }
 
         ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(); // Alpha
     }
 
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2); // WindowRounding, WindowPadding
     ImGui::PopStyleColor(2);
 }
 
 void Window::UpdateElement() {
+    // DEBUG: press N for a test toast. Remove when done.
+#define CRT_DEBUG_NOTIFICATION_HOTKEY 0
+#if CRT_DEBUG_NOTIFICATION_HOTKEY
+    if (!ImGui::GetIO().WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        Emit({
+            .message = "Notification test",
+            .mute = true,
+        });
+    }
+#endif
+
     for (int index = 0; index < notifications.size(); ++index) {
         auto& notification = notifications[index];
 

@@ -17,6 +17,7 @@
 #include <fast/Fast3dGui.h>
 #include <climits>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -113,12 +114,10 @@ static bool IsCrtEnhancedModeOn() {
 
 // On: write pack values. Off: clear only pack keys (leave Mirror/Hyper/Damage etc alone).
 static void SetCrtEnhancedMode(bool enable) {
-    if (enable) {
-        for (const auto& [name, value] : kCrtEnhancedModeCVars) {
+    for (const auto& [name, value] : kCrtEnhancedModeCVars) {
+        if (enable) {
             CVarSetInteger(name, value);
-        }
-    } else {
-        for (const auto& [name, value] : kCrtEnhancedModeCVars) {
+        } else {
             CVarClear(name);
         }
     }
@@ -135,6 +134,24 @@ static void CrtEnhCheckbox(const char* label, const char* cvar) {
     }
 }
 
+static void CrtSettingCheckbox(const char* label, const char* cvar, bool defaultOn = false) {
+    bool value = CVarGetInteger(cvar, defaultOn ? 1 : 0) != 0;
+    if (ImGui::Checkbox(label, &value)) {
+        CVarSetInteger(cvar, value ? 1 : 0);
+        CVarSave();
+    }
+}
+
+static int CrtClampInt(int value, int lo, int hi) {
+    if (value < lo) {
+        return lo;
+    }
+    if (value > hi) {
+        return hi;
+    }
+    return value;
+}
+
 // Fixed-width label column so sliders/combos share one horizontal start edge.
 static void CrtControlLabel(const char* label, const char* widest = "Menu Opacity") {
     const float colW = ImGui::CalcTextSize(widest).x + ImGui::GetStyle().ItemSpacing.x;
@@ -144,69 +161,80 @@ static void CrtControlLabel(const char* label, const char* widest = "Menu Opacit
     ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMin().x + colW);
 }
 
-static void CrtDrawSettingsTab() {
-    const float sliderW = 120.0f;
-
-    ImGui::TextUnformatted("Graphics");
+// Non-focusable section title at the top of a tab.
+static void CrtTabLabel(const char* label) {
+    ImGui::TextUnformatted(label);
     ImGui::Separator();
+}
+
+static void CrtSectionHeader(const char* label) {
+    ImGui::TextUnformatted(label);
+    ImGui::Separator();
+}
+
+static constexpr float kCrtSliderW = 120.0f;
+
+// Int slider bound to a CVar. Optional ShipInit and/or audio player volume update.
+static void CrtIntSliderCVar(const char* label, const char* id, const char* cvar, int defaultValue, int lo, int hi,
+                            const char* format = "%d", bool shipInit = false, int seqPlayer = -1) {
+    int value = CrtClampInt(CVarGetInteger(cvar, defaultValue), lo, hi);
+    CrtControlLabel(label);
+    ImGui::SetNextItemWidth(kCrtSliderW);
+    if (ImGui::SliderInt(id, &value, lo, hi, format)) {
+        CVarSetInteger(cvar, value);
+        CVarSave();
+        if (shipInit) {
+            ShipInit::Init(cvar);
+        }
+        if (seqPlayer >= 0) {
+            Audio_SetGameVolume(seqPlayer, value / 100.0f);
+        }
+    }
+}
+
+static void CrtFloatSliderCVar(const char* label, const char* id, const char* cvar, float defaultValue, float lo,
+                               float hi, const char* format = "%.2f", bool shipInit = false) {
+    float value = CVarGetFloat(cvar, defaultValue);
+    CrtControlLabel(label);
+    ImGui::SetNextItemWidth(kCrtSliderW);
+    if (ImGui::SliderFloat(id, &value, lo, hi, format)) {
+        CVarSetFloat(cvar, value);
+        CVarSave();
+        if (shipInit) {
+            ShipInit::Init(cvar);
+        }
+    }
+}
+
+static void CrtDrawSettingsTab() {
+    CrtTabLabel("Settings");
+    CrtSectionHeader("Graphics");
 
     uint32_t refreshHz = Ship::Context::GetRawInstance()->GetWindow()->GetCurrentRefreshRate();
     int fpsMax = refreshHz > 20 ? static_cast<int>(refreshHz) : 20;
     bool matchRefresh = CVarGetInteger(CVAR_SETTING("MatchRefreshRate"), 0) != 0;
-    int fps = CVarGetInteger(CVAR_SETTING("InterpolationFPS"), 20);
-    if (fps < 20) {
-        fps = 20;
-    }
-    if (fps > fpsMax) {
-        fps = fpsMax;
-    }
+    int fps = CrtClampInt(CVarGetInteger(CVAR_SETTING("InterpolationFPS"), 20), 20, fpsMax);
     ImGui::BeginDisabled(matchRefresh);
     CrtControlLabel("FPS");
-    ImGui::SetNextItemWidth(sliderW);
+    ImGui::SetNextItemWidth(kCrtSliderW);
     if (ImGui::SliderInt("##CrtFps", &fps, 20, fpsMax)) {
         CVarSetInteger(CVAR_SETTING("InterpolationFPS"), fps);
         CVarSave();
     }
     ImGui::EndDisabled();
 
-    if (ImGui::Checkbox("Match Refresh Rate", &matchRefresh)) {
-        CVarSetInteger(CVAR_SETTING("MatchRefreshRate"), matchRefresh ? 1 : 0);
-        CVarSave();
-    }
+    CrtSettingCheckbox("Match Refresh Rate", CVAR_SETTING("MatchRefreshRate"));
 
     ImGui::Spacing();
-    ImGui::TextUnformatted("Audio");
-    ImGui::Separator();
+    CrtSectionHeader("Audio");
 
-    int masterVol = CVarGetInteger(CVAR_SETTING("Volume.Master"), 40);
-    CrtControlLabel("Master");
-    ImGui::SetNextItemWidth(sliderW);
-    if (ImGui::SliderInt("##CrtMasterVol", &masterVol, 0, 100)) {
-        CVarSetInteger(CVAR_SETTING("Volume.Master"), masterVol);
-        CVarSave();
-    }
-
-    int musicVol = CVarGetInteger(CVAR_SETTING("Volume.MainMusic"), 100);
-    CrtControlLabel("Music");
-    ImGui::SetNextItemWidth(sliderW);
-    if (ImGui::SliderInt("##CrtMusicVol", &musicVol, 0, 100)) {
-        CVarSetInteger(CVAR_SETTING("Volume.MainMusic"), musicVol);
-        CVarSave();
-        Audio_SetGameVolume(SEQ_PLAYER_BGM_MAIN, musicVol / 100.0f);
-    }
-
-    int sfxVol = CVarGetInteger(CVAR_SETTING("Volume.SFX"), 100);
-    CrtControlLabel("SFX");
-    ImGui::SetNextItemWidth(sliderW);
-    if (ImGui::SliderInt("##CrtSfxVol", &sfxVol, 0, 100)) {
-        CVarSetInteger(CVAR_SETTING("Volume.SFX"), sfxVol);
-        CVarSave();
-        Audio_SetGameVolume(SEQ_PLAYER_SFX, sfxVol / 100.0f);
-    }
+    CrtIntSliderCVar("Master", "##CrtMasterVol", CVAR_SETTING("Volume.Master"), 40, 0, 100);
+    CrtIntSliderCVar("Music", "##CrtMusicVol", CVAR_SETTING("Volume.MainMusic"), 100, 0, 100, "%d", false,
+                     SEQ_PLAYER_BGM_MAIN);
+    CrtIntSliderCVar("SFX", "##CrtSfxVol", CVAR_SETTING("Volume.SFX"), 100, 0, 100, "%d", false, SEQ_PLAYER_SFX);
 
     ImGui::Spacing();
-    ImGui::TextUnformatted("General");
-    ImGui::Separator();
+    CrtSectionHeader("General");
 
     static const int kBootValues[] = { BOOTSEQUENCE_DEFAULT, BOOTSEQUENCE_AUTHENTIC, BOOTSEQUENCE_FILESELECT,
                                        BOOTSEQUENCE_DEBUGWARPSCREEN, BOOTSEQUENCE_WARPPOINT };
@@ -220,30 +248,19 @@ static void CrtDrawSettingsTab() {
         }
     }
     CrtControlLabel("Boot");
-    ImGui::SetNextItemWidth(sliderW);
+    ImGui::SetNextItemWidth(kCrtSliderW);
     if (ImGui::Combo("##CrtBoot", &bootIdx, kBootLabels, 5)) {
         CVarSetInteger(CVAR_SETTING("BootSequence"), kBootValues[bootIdx]);
         CVarSave();
         ShipInit::Init(CVAR_SETTING("BootSequence"));
     }
 
-    bool disableIdleCam = CVarGetInteger(CVAR_SETTING("A11yDisableIdleCam"), 0) != 0;
-    if (ImGui::Checkbox("Disable Idle Camera", &disableIdleCam)) {
-        CVarSetInteger(CVAR_SETTING("A11yDisableIdleCam"), disableIdleCam ? 1 : 0);
-        CVarSave();
-    }
-
-    float opacity = CVarGetFloat(CVAR_SETTING("Menu.BackgroundOpacity"), 0.85f);
-    CrtControlLabel("Menu Opacity");
-    ImGui::SetNextItemWidth(sliderW);
-    if (ImGui::SliderFloat("##CrtMenuOpacity", &opacity, 0.0f, 1.0f, "%.2f")) {
-        CVarSetFloat(CVAR_SETTING("Menu.BackgroundOpacity"), opacity);
-        CVarSave();
-    }
+    CrtSettingCheckbox("Disable Idle Camera", CVAR_SETTING("A11yDisableIdleCam"));
+    CrtFloatSliderCVar("Menu Opacity", "##CrtMenuOpacity", CVAR_SETTING("Menu.BackgroundOpacity"), 0.85f, 0.0f, 1.0f);
 }
 
 static void CrtDrawEnhancementsTab() {
-    const float sliderW = 120.0f;
+    CrtTabLabel("Enhancements");
 
     // Pack master toggle, then the individual CVars it also sets (its "children").
     bool qolPack = IsCrtEnhancedModeOn();
@@ -252,15 +269,9 @@ static void CrtDrawEnhancementsTab() {
     }
     ImGui::Separator();
 
-    int textSpeed = CVarGetInteger(CVAR_ENHANCEMENT("TextSpeed"), 1);
-    if (textSpeed < 1) {
-        textSpeed = 1;
-    }
-    if (textSpeed > 6) {
-        textSpeed = 6;
-    }
+    int textSpeed = CrtClampInt(CVarGetInteger(CVAR_ENHANCEMENT("TextSpeed"), 1), 1, 6);
     CrtControlLabel("Text Speed");
-    ImGui::SetNextItemWidth(sliderW);
+    ImGui::SetNextItemWidth(kCrtSliderW);
     const char* textSpeedFmt = textSpeed >= 6 ? "Instant" : "%dx";
     if (ImGui::SliderInt("##CrtTextSpeed", &textSpeed, 1, 6, textSpeedFmt)) {
         CVarSetInteger(CVAR_ENHANCEMENT("TextSpeed"), textSpeed);
@@ -310,20 +321,7 @@ static void CrtDrawEnhancementsTab() {
     CrtEnhCheckbox("Hyper Enemies", CVAR_ENHANCEMENT("HyperEnemies"));
     CrtEnhCheckbox("Instant Putaway", CVAR_ENHANCEMENT("InstantPutaway"));
 
-    int climbSpeed = CVarGetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), 0);
-    if (climbSpeed < 0) {
-        climbSpeed = 0;
-    }
-    if (climbSpeed > 12) {
-        climbSpeed = 12;
-    }
-    CrtControlLabel("Climb Speed");
-    ImGui::SetNextItemWidth(sliderW);
-    if (ImGui::SliderInt("##CrtClimbSpeed", &climbSpeed, 0, 12, "+%d")) {
-        CVarSetInteger(CVAR_ENHANCEMENT("ClimbSpeed"), climbSpeed);
-        CVarSave();
-        ShipInit::Init(CVAR_ENHANCEMENT("ClimbSpeed"));
-    }
+    CrtIntSliderCVar("Climb Speed", "##CrtClimbSpeed", CVAR_ENHANCEMENT("ClimbSpeed"), 0, 0, 12, "+%d", true);
 
     CrtEnhCheckbox("Instant Scarecrow", CVAR_ENHANCEMENT("InstantScarecrow"));
 }
@@ -332,6 +330,10 @@ static void CrtDrawEnhancementsTab() {
 
 static int32_t sCrtMappingInputBlockTimer = INT32_MAX;
 static bool sCrtMappingPopupOpen = false;
+
+static std::shared_ptr<Controller> CrtPort0Controller() {
+    return Context::GetRawInstance()->GetControlDeck()->GetControllerByPort(0);
+}
 
 static std::string CrtFirstConnectedGamepadName() {
     auto names = Ship::Context::GetRawInstance()
@@ -344,11 +346,28 @@ static std::string CrtFirstConnectedGamepadName() {
     return names.begin()->second;
 }
 
+// Proggy Tiny has no Font Awesome glyphs; map FA icons to plain keyboard characters.
+static std::string CrtSanitizeBindingLabel(std::string name) {
+    auto replaceAll = [](std::string& s, const char* from, const char* to) {
+        const size_t fromLen = std::char_traits<char>::length(from);
+        const size_t toLen = std::char_traits<char>::length(to);
+        for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += toLen) {
+            s.replace(pos, fromLen, to);
+        }
+    };
+    // SDLButtonToAnyMapping / SDLAxisDirectionToAnyMapping icon literals (IconsFontAwesome4.h).
+    replaceAll(name, "\xef\x83\x89", "Start"); // ICON_FA_BARS
+    replaceAll(name, "\xef\x81\xa2", "^"); // ICON_FA_ARROW_UP
+    replaceAll(name, "\xef\x81\xa3", "v"); // ICON_FA_ARROW_DOWN
+    replaceAll(name, "\xef\x81\xa0", "<"); // ICON_FA_ARROW_LEFT
+    replaceAll(name, "\xef\x81\xa1", ">"); // ICON_FA_ARROW_RIGHT
+    return name;
+}
+
 static std::string CrtGamepadBindingLabel(CONTROLLERBUTTONS_T bitmask) {
-    auto button = Ship::Context::GetRawInstance()->GetControlDeck()->GetControllerByPort(0)->GetButton(bitmask);
-    for (const auto& [id, mapping] : button->GetAllButtonMappings()) {
+    for (const auto& [id, mapping] : CrtPort0Controller()->GetButton(bitmask)->GetAllButtonMappings()) {
         if (mapping != nullptr && mapping->GetPhysicalDeviceType() == Ship::PhysicalDeviceType::SDLGamepad) {
-            return mapping->GetPhysicalInputName();
+            return CrtSanitizeBindingLabel(mapping->GetPhysicalInputName());
         }
     }
     return "-";
@@ -356,11 +375,23 @@ static std::string CrtGamepadBindingLabel(CONTROLLERBUTTONS_T bitmask) {
 
 static void CrtDrawControllerButtonRow(const char* label, CONTROLLERBUTTONS_T bitmask) {
     ImGui::PushID(static_cast<int>(bitmask));
+
+    const char* setLabel = "Set";
+    const char* clrLabel = "Clr";
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float setW = ImGui::CalcTextSize(setLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float clrW = ImGui::CalcTextSize(clrLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float buttonsX = ImGui::GetWindowContentRegionMax().x - (setW + gap + clrW);
+
+    ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
     ImGui::SameLine(52.0f);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(CrtGamepadBindingLabel(bitmask).c_str());
-    ImGui::SameLine(120.0f);
-    if (ImGui::SmallButton("Set")) {
+
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::SetCursorPosX(buttonsX);
+    if (ImGui::Button(setLabel)) {
         ImGui::OpenPopup("CrtBindPopup");
         sCrtMappingInputBlockTimer = static_cast<int32_t>(ImGui::GetIO().Framerate / 3.0f);
         if (sCrtMappingInputBlockTimer < 1) {
@@ -368,12 +399,9 @@ static void CrtDrawControllerButtonRow(const char* label, CONTROLLERBUTTONS_T bi
         }
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear")) {
-        Ship::Context::GetRawInstance()
-            ->GetControlDeck()
-            ->GetControllerByPort(0)
-            ->GetButton(bitmask)
-            ->ClearAllButtonMappingsForDeviceType(Ship::PhysicalDeviceType::SDLGamepad);
+    if (ImGui::Button(clrLabel)) {
+        CrtPort0Controller()->GetButton(bitmask)->ClearAllButtonMappingsForDeviceType(
+            Ship::PhysicalDeviceType::SDLGamepad);
     }
 
     if (ImGui::BeginPopup("CrtBindPopup")) {
@@ -383,11 +411,8 @@ static void CrtDrawControllerButtonRow(const char* label, CONTROLLERBUTTONS_T bi
             sCrtMappingPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-        if (sCrtMappingInputBlockTimer == INT32_MAX && Ship::Context::GetRawInstance()
-                                                           ->GetControlDeck()
-                                                           ->GetControllerByPort(0)
-                                                           ->GetButton(bitmask)
-                                                           ->AddOrEditButtonMappingFromRawPress(bitmask, "")) {
+        if (sCrtMappingInputBlockTimer == INT32_MAX &&
+            CrtPort0Controller()->GetButton(bitmask)->AddOrEditButtonMappingFromRawPress(bitmask, "")) {
             sCrtMappingPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
@@ -418,6 +443,8 @@ static void CrtUpdateControllerMappingGuards() {
 }
 
 static void CrtDrawControllerTab() {
+    CrtTabLabel("Controller");
+
     const std::string padName = CrtFirstConnectedGamepadName();
     if (padName.empty()) {
         ImGui::TextUnformatted("No controller");
@@ -440,6 +467,39 @@ static void CrtDrawControllerTab() {
     }
 
     ImGui::Separator();
+    if (ImGui::Button("Reset Defaults")) {
+        auto controller = CrtPort0Controller();
+        controller->ClearAllMappingsForDeviceType(Ship::PhysicalDeviceType::SDLGamepad);
+        controller->AddDefaultMappings(Ship::PhysicalDeviceType::SDLGamepad);
+    }
+}
+
+static void CrtDrawCheatsTab() {
+    CrtTabLabel("Cheats");
+
+    CrtEnhCheckbox("Infinite Health", CVAR_CHEAT("InfiniteHealth"));
+    CrtEnhCheckbox("Infinite Magic", CVAR_CHEAT("InfiniteMagic"));
+    CrtEnhCheckbox("Infinite Ammo", CVAR_CHEAT("InfiniteAmmo"));
+    CrtEnhCheckbox("Infinite Money", CVAR_CHEAT("InfiniteMoney"));
+    CrtEnhCheckbox("Infinite Nayru's Love", CVAR_CHEAT("InfiniteNayru"));
+    CrtEnhCheckbox("Infinite Epona Boost", CVAR_CHEAT("InfiniteEponaBoost"));
+
+    ImGui::Separator();
+    CrtEnhCheckbox("Moon Jump on L", CVAR_CHEAT("MoonJumpOnL"));
+    CrtEnhCheckbox("No Clip", CVAR_CHEAT("NoClip"));
+    CrtEnhCheckbox("Climb Everything", CVAR_CHEAT("ClimbEverything"));
+    CrtEnhCheckbox("Hookshot Everything", CVAR_CHEAT("HookshotEverything"));
+
+    ImGui::Separator();
+    CrtEnhCheckbox("Timeless Equipment", CVAR_CHEAT("TimelessEquipment"));
+    CrtEnhCheckbox("Unrestricted Items", CVAR_CHEAT("NoRestrictItems"));
+    CrtEnhCheckbox("Super Tunic", CVAR_CHEAT("SuperTunic"));
+    CrtEnhCheckbox("Fireproof Deku Shield", CVAR_CHEAT("FireproofDekuShield"));
+    CrtEnhCheckbox("Freeze Time", CVAR_CHEAT("FreezeTime"));
+    CrtEnhCheckbox("No Redead Freeze", CVAR_CHEAT("NoRedeadFreeze"));
+    CrtEnhCheckbox("Disable Sandstorm", CVAR_CHEAT("DisableSandstorm"));
+
+    ImGui::Separator();
     ImGui::TextUnformatted("Speed Modifier");
     CrtDrawControllerButtonRow("Spd", BTN_CUSTOM_MODIFIER1);
 
@@ -454,7 +514,7 @@ static void CrtDrawControllerTab() {
     ImGui::BeginDisabled(!speedMapped);
     float speedPct = CVarGetFloat(CVAR_CHEAT("SpeedModifier.Value"), 1.0f) * 100.0f;
     CrtControlLabel("Multiplier");
-    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SetNextItemWidth(kCrtSliderW);
     if (ImGui::SliderFloat("##CrtSpeedMult", &speedPct, 1.0f, 500.0f, "%.0f%%")) {
         CVarSetFloat(CVAR_CHEAT("SpeedModifier.Value"), speedPct / 100.0f);
         CVarSave();
@@ -467,13 +527,6 @@ static void CrtDrawControllerTab() {
         CVarSave();
     }
     ImGui::EndDisabled();
-
-    ImGui::Separator();
-    if (ImGui::Button("Reset Defaults")) {
-        auto controller = Ship::Context::GetRawInstance()->GetControlDeck()->GetControllerByPort(0);
-        controller->ClearAllMappingsForDeviceType(Ship::PhysicalDeviceType::SDLGamepad);
-        controller->AddDefaultMappings(Ship::PhysicalDeviceType::SDLGamepad);
-    }
 }
 
 static int CrtBridgeEnumToIndex(int bridge) {
@@ -509,32 +562,35 @@ static void CrtSaveRandoSetting() {
     Rando::Settings::GetInstance()->UpdateAllOptions();
 }
 
+static void CrtRandoIntCombo(const char* label, const char* id, const char* cvar, int* value, const char* items,
+                             const char* widestLabel) {
+    CrtControlLabel(label, widestLabel);
+    ImGui::SetNextItemWidth(ImMin(95.0f, ImGui::GetContentRegionAvail().x));
+    if (ImGui::Combo(id, value, items)) {
+        CVarSetInteger(cvar, *value);
+        CrtSaveRandoSetting();
+    }
+}
+
 static void CrtDrawRandomizerTab() {
     // Seed generation stays in-game (File Select). These CVars feed that Generate flow.
     constexpr const char* kRandoLabelCol = "Ganon's Trials";
-    const float comboW = ImMin(95.0f, ImGui::GetContentRegionAvail().x);
+
+    CrtTabLabel("Randomizer");
 
     int forest = CVarGetInteger(CVAR_RANDOMIZER_SETTING("ClosedForest"), RO_CLOSED_FOREST_OFF);
     if (forest < RO_CLOSED_FOREST_ON || forest > RO_CLOSED_FOREST_OFF) {
         forest = RO_CLOSED_FOREST_OFF;
     }
-    CrtControlLabel("Forest", kRandoLabelCol);
-    ImGui::SetNextItemWidth(comboW);
-    if (ImGui::Combo("##CrtForest", &forest, "On\0Deku Only\0Off\0")) {
-        CVarSetInteger(CVAR_RANDOMIZER_SETTING("ClosedForest"), forest);
-        CrtSaveRandoSetting();
-    }
+    CrtRandoIntCombo("Forest", "##CrtForest", CVAR_RANDOMIZER_SETTING("ClosedForest"), &forest,
+                     "On\0Deku Only\0Off\0", kRandoLabelCol);
 
     int doorOfTime = CVarGetInteger(CVAR_RANDOMIZER_SETTING("DoorOfTime"), RO_DOOROFTIME_OPEN);
     if (doorOfTime < RO_DOOROFTIME_CLOSED || doorOfTime > RO_DOOROFTIME_OPEN) {
         doorOfTime = RO_DOOROFTIME_OPEN;
     }
-    CrtControlLabel("Door of Time", kRandoLabelCol);
-    ImGui::SetNextItemWidth(comboW);
-    if (ImGui::Combo("##CrtDoorOfTime", &doorOfTime, "Closed\0Song only\0Open\0")) {
-        CVarSetInteger(CVAR_RANDOMIZER_SETTING("DoorOfTime"), doorOfTime);
-        CrtSaveRandoSetting();
-    }
+    CrtRandoIntCombo("Door of Time", "##CrtDoorOfTime", CVAR_RANDOMIZER_SETTING("DoorOfTime"), &doorOfTime,
+                     "Closed\0Song only\0Open\0", kRandoLabelCol);
 
     bool skipChildZelda =
         CVarGetInteger(CVAR_RANDOMIZER_SETTING("ShuffleWeirdEgg"), RO_WEIRD_EGG_SKIP_TALON) == RO_WEIRD_EGG_SKIP_TALON;
@@ -546,7 +602,7 @@ static void CrtDrawRandomizerTab() {
 
     int bridgeIdx = CrtBridgeEnumToIndex(CVarGetInteger(CVAR_RANDOMIZER_SETTING("RainbowBridge"), RO_BRIDGE_GREG));
     CrtControlLabel("Rainbow Bridge", kRandoLabelCol);
-    ImGui::SetNextItemWidth(comboW);
+    ImGui::SetNextItemWidth(ImMin(95.0f, ImGui::GetContentRegionAvail().x));
     if (ImGui::Combo("##CrtBridge", &bridgeIdx, "Vanilla\0Always open\0Medallions\0Greg\0")) {
         CVarSetInteger(CVAR_RANDOMIZER_SETTING("RainbowBridge"), CrtBridgeIndexToEnum(bridgeIdx));
         CrtSaveRandoSetting();
@@ -555,7 +611,7 @@ static void CrtDrawRandomizerTab() {
     int ganonTrial = CVarGetInteger(CVAR_RANDOMIZER_SETTING("GanonTrial"), RO_GANONS_TRIALS_SKIP);
     int trialsIdx = (ganonTrial == RO_GANONS_TRIALS_SKIP) ? 0 : 1;
     CrtControlLabel("Ganon's Trials", kRandoLabelCol);
-    ImGui::SetNextItemWidth(comboW);
+    ImGui::SetNextItemWidth(ImMin(95.0f, ImGui::GetContentRegionAvail().x));
     if (ImGui::Combo("##CrtTrials", &trialsIdx, "Skip\0"
                                                 "6 trials\0")) {
         if (trialsIdx == 0) {
@@ -584,6 +640,7 @@ static void CrtEnsureTabIconsLoaded() {
     } icons[] = {
         { "CrtTab-Settings", "textures/crt/settings_icon.png" },
         { "CrtTab-Enhancements", "textures/crt/enhancements_icon.png" },
+        { "CrtTab-Cheats", "textures/crt/cheats_icon.png" },
         { "CrtTab-Controller", "textures/crt/controller_icon.png" },
         { "CrtTab-Randomizer", "textures/crt/randomizer_icon.png" },
     };
@@ -598,6 +655,7 @@ static void CrtEnsureTabIconsLoaded() {
 static constexpr float kCrtTabHeight = 22.0f;
 static constexpr float kCrtTabWidth = 34.0f; // 8px wider than tall
 static constexpr float kCrtTabIcon = 16.0f;
+static constexpr float kCrtWidgetHeight = 14.0f;
 
 static bool CrtBeginIconTabItem(const char* id, const char* tooltip, const char* textureName) {
     char label[64];
@@ -618,6 +676,40 @@ static bool CrtBeginIconTabItem(const char* id, const char* tooltip, const char*
     return open;
 }
 
+static void CrtPushWidgetFramePadding() {
+    const float padY = ImMax(0.0f, (kCrtWidgetHeight - ImGui::GetFontSize()) * 0.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, padY));
+}
+
+static void CrtDrawIconTab(const char* id, const char* tooltip, const char* textureName, const char* childId,
+                           float footerH, void (*draw)()) {
+    if (!CrtBeginIconTabItem(id, tooltip, textureName)) {
+        return;
+    }
+    CrtPushWidgetFramePadding();
+    ImGui::BeginChild(childId, ImVec2(0.0f, -footerH), false);
+    draw();
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::EndTabItem();
+}
+
+static void CrtDrawMenuFooter() {
+    CrtPushWidgetFramePadding();
+    if (ImGui::Button("Quit")) {
+        Context::GetRawInstance()->GetWindow()->Close();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset")) {
+        auto consoleWindow = std::reinterpret_pointer_cast<ConsoleWindow>(
+            Context::GetRawInstance()->GetWindow()->GetGui()->GetGuiWindow("Console"));
+        if (consoleWindow) {
+            consoleWindow->Dispatch("reset");
+        }
+    }
+    ImGui::PopStyleVar();
+}
+
 // CRT: icon-tab modal sized for small CRT displays. Quit/Reset stay pinned under a scrollable body.
 void DrawCrtSimpleMenu() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -626,70 +718,39 @@ void DrawCrtSimpleMenu() {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
     const float opacity = CVarGetFloat(CVAR_SETTING("Menu.BackgroundOpacity"), 0.85f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, opacity));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     if (ImGui::Begin("CRT Menu", nullptr, flags)) {
-        const float footerH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
         CrtEnsureTabIconsLoaded();
 
-        // BeginTabBar locks BarRect height from FramePadding — keep tab padding for the bar/headers,
-        // and only switch to compact padding inside selected tab content.
-        constexpr ImVec2 kCrtWidgetPad(4.0f, 2.0f);
+        CrtPushWidgetFramePadding();
+        // Reserve exactly one button row + one ItemSpacing gap above the footer.
+        const float footerH = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+        ImGui::PopStyleVar();
+
+        // Taller padding only for the icon tab bar; content uses compact widget height.
         const float tabPadY = ImMax(0.0f, (kCrtTabHeight - ImGui::GetFontSize()) * 0.5f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, tabPadY));
         if (ImGui::BeginTabBar("CrtTabs", ImGuiTabBarFlags_NoTooltip)) {
-            if (CrtBeginIconTabItem("Settings", "Settings", "CrtTab-Settings")) {
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, kCrtWidgetPad);
-                ImGui::BeginChild("CrtSettingsBody", ImVec2(0.0f, -footerH), false);
-                CrtDrawSettingsTab();
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::EndTabItem();
-            }
-            if (CrtBeginIconTabItem("Enhancements", "Enhancements", "CrtTab-Enhancements")) {
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, kCrtWidgetPad);
-                ImGui::BeginChild("CrtEnhancementsBody", ImVec2(0.0f, -footerH), false);
-                CrtDrawEnhancementsTab();
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::EndTabItem();
-            }
-            if (CrtBeginIconTabItem("Controller", "Controller", "CrtTab-Controller")) {
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, kCrtWidgetPad);
-                ImGui::BeginChild("CrtControllerBody", ImVec2(0.0f, -footerH), false);
-                CrtDrawControllerTab();
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::EndTabItem();
-            }
-            if (CrtBeginIconTabItem("Randomizer", "Randomizer", "CrtTab-Randomizer")) {
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, kCrtWidgetPad);
-                ImGui::BeginChild("CrtRandomizerBody", ImVec2(0.0f, -footerH), false);
-                CrtDrawRandomizerTab();
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::EndTabItem();
-            }
+            CrtDrawIconTab("Settings", "Settings", "CrtTab-Settings", "CrtSettingsBody", footerH, CrtDrawSettingsTab);
+            CrtDrawIconTab("Enhancements", "Enhancements", "CrtTab-Enhancements", "CrtEnhancementsBody", footerH,
+                           CrtDrawEnhancementsTab);
+            CrtDrawIconTab("Cheats", "Cheats", "CrtTab-Cheats", "CrtCheatsBody", footerH, CrtDrawCheatsTab);
+            CrtDrawIconTab("Controller", "Controller", "CrtTab-Controller", "CrtControllerBody", footerH,
+                           CrtDrawControllerTab);
+            CrtDrawIconTab("Randomizer", "Randomizer", "CrtTab-Randomizer", "CrtRandomizerBody", footerH,
+                           CrtDrawRandomizerTab);
             ImGui::EndTabBar();
         }
         ImGui::PopStyleVar();
 
         CrtUpdateControllerMappingGuards();
-
-        if (ImGui::Button("Quit")) {
-            Ship::Context::GetRawInstance()->GetWindow()->Close();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset")) {
-            auto consoleWindow = std::reinterpret_pointer_cast<Ship::ConsoleWindow>(
-                Ship::Context::GetRawInstance()->GetWindow()->GetGui()->GetGuiWindow("Console"));
-            if (consoleWindow) {
-                consoleWindow->Dispatch("reset");
-            }
-        }
+        CrtDrawMenuFooter();
     }
     ImGui::End();
     ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
 }
 
 } // namespace Ship
