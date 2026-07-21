@@ -1,7 +1,22 @@
 # Shipwright-CRT
 ===============
 
-A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) aimed at **320x240 CRT** play on Raspberry Pi Linux (specifically Debian-family images such as RGB-Pi), with a small controller-friendly settings UI.
+A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) for **320x240 CRT** play, with a small controller-friendly settings UI.
+
+| | |
+|---|---|
+| ![](soh/assets/readme_images/settings.png) | ![](soh/assets/readme_images/controllers.png) |
+| ![](soh/assets/readme_images/enhancements.png) | ![](soh/assets/readme_images/randomizer.png) |
+
+**Play target:** Raspberry Pi Linux images in general (RGB-Pi, Batocera, Lakka, RetroPie, Recalbox, and similar). Drop in a release AppImage; you should not need to compile.
+
+**Build / deploy scripts:** aimed at [RGB-Pi OS4](https://www.rgb-pi.com/) (paths like `/media/sd/soh-build.img`, SSH user `pi`, etc.). You can also build and test on a normal Linux PC (`HOST_TARGET=pc`). Compiling on other frontend images is not supported by these scripts.
+
+## Download (no build required)
+
+Grab a prebuilt release zip from the GitHub [Releases](https://github.com/gustavostuff/Shipwright-CRT/releases) page. Unpack it; inside is a folder with the Pi AppImage and the other files you need. Drop that folder onto your Pi image, add a legal OoT ROM, and run. You do **not** need to compile for normal use.
+
+See [Run](#run) below if the AppImage needs `APPIMAGE_EXTRACT_AND_RUN=1`.
 
 ## What you get
 
@@ -15,67 +30,61 @@ You still need a **legally obtained** Ocarina of Time ROM (`.z64` / `.n64` / `.v
 
 Upstream SoH has a large desktop-oriented menu. This fork uses a compact modal meant for a CRT and a gamepad (keyboard and mouse are still supported though). The CRT UI is **English-only for now**. Several settings UI controls will not be migrated, I'll try to keep it simple. For the full SoH feature set, see [Harbour Masters](https://github.com/HarbourMasters/Shipwright).
 
-## Build (AppImage)
+## Build from source
 
-### PC
+Only needed if you are developing this fork or want a custom build. This is a **native** build only (no PC-->Pi cross-compile). Typical workflow: iterate on a PC, then deploy to an RGB-Pi box when you want a Pi AppImage.
+
+### PC (develop / test)
 
 ```bash
 git clone --recursive https://github.com/gustavostuff/Shipwright-CRT.git
 cd Shipwright-CRT
+git submodule update --init --recursive   # if the clone was not --recursive
 HOST_TARGET=pc ./scripts/linux/appimage/build.sh
 ```
 
-### Raspberry Pi
+Output: `_packages/soh-pc.AppImage` plus `shipofharkinian.json`, `proggy-tiny.ttf`, and `proggy-tiny-licence.txt`.
 
-The Pi rootfs is usually too small to clone and compile. **Do not** `git clone` into `/home/pi`. Instead, keep an ext4 loop image (default `/media/sd/soh-build.img`), and let the build script mount it, clone onto it, and build there:
+### RGB-Pi OS4 (build from your PC)
 
-```bash
-# One-time: free a failed rootfs clone if you already hit "No space left on device"
-rm -rf ~/Shipwright-CRT
-
-# Bootstrap the build script (no full tree on the rootfs)
-curl -fsSL https://raw.githubusercontent.com/gustavostuff/Shipwright-CRT/main/scripts/linux/appimage/build.sh \
-  -o /tmp/soh-crt-build.sh
-chmod +x /tmp/soh-crt-build.sh
-
-# Mounts ~/soh-build, clones into ~/soh-build/Shipwright-CRT, then builds
-HOST_TARGET=pi /tmp/soh-crt-build.sh
-# Optional non-interactive sudo for the loop mount:
-# SUDO_PWD='yourpassword' HOST_TARGET=pi /tmp/soh-crt-build.sh
-```
-
-Later rebuilds (tree already on the image):
+Building on-device is set up for RGB-Pi OS4. Its rootfs is usually too small to `git clone` and compile there, so `deploy-on-pi.sh` syncs this checkout over the LAN onto a loop-mounted ext4 image (RGB-Pi-style defaults), builds there, and copies the AppImage back:
 
 ```bash
-HOST_TARGET=pi ~/soh-build/Shipwright-CRT/scripts/linux/appimage/build.sh
+# From your PC, inside this repo (submodules already initialized):
+./scripts/linux/deploy-on-pi.sh IP=192.168.1.10 USER=pi PASS=secret
 ```
 
-Overrides: `SOH_BUILD_IMG`, `SOH_BUILD_MOUNT`, `SOH_BUILD_TREE`, `SOH_GIT_URL`, `SUDO_PWD`.
+That script will:
 
-This is a **native** build only (no PC→Pi cross-compile). If `HOST_TARGET` is omitted, Pi arches default to `pi`, otherwise `pc`.
+1. SSH to the Pi and mount `/media/sd/soh-build.img` --> `~/soh-build` (if needed)
+2. `rsync` this tree to `~/soh-build/Shipwright-CRT` (skips `.git`, `build-cmake`, `_packages`)
+3. Run `HOST_TARGET=pi ./scripts/linux/appimage/build.sh` on the Pi
+4. Copy `soh-raspberry-pi.AppImage` (and sidecars) back into local `_packages/`
 
-Output lands in `_packages/` (on the Pi that is under the mounted tree):
+Requires `sshpass` on the PC (`sudo pacman -S sshpass` / `sudo apt install sshpass`). Optional: `--no-build` to sync only. `SUDO_PWD=` defaults to `PASS` for the loop mount.
+
+Defaults assume RGB-Pi-style paths (`/media/sd/soh-build.img`, user `pi`). Override if your layout differs: `SOH_BUILD_IMG`, `SOH_BUILD_MOUNT`, `SOH_BUILD_TREE`.
 
 | Target | AppImage |
 |--------|----------|
-| `pc` (default on x86_64) | `soh-pc.AppImage` |
-| `pi` (default on aarch64) | `soh-raspberry-pi.AppImage` |
-
-Plus `shipofharkinian.json` and `proggy-tiny.ttf` beside it.
+| `pc` | `soh-pc.AppImage` |
+| `pi` | `soh-raspberry-pi.AppImage` |
 
 ## Run
 
+From an unpacked [Release](https://github.com/gustavostuff/Shipwright-CRT/releases) folder, or from `_packages/` after a local build:
+
 ```bash
-cd _packages
+cd /path/to/release-folder   # or _packages after building
 # put your OoT ROM in this folder
-chmod +x soh-pc.AppImage   # or soh-raspberry-pi.AppImage
-./soh-pc.AppImage
+chmod +x soh-raspberry-pi.AppImage   # or soh-pc.AppImage on a PC build
+./soh-raspberry-pi.AppImage
 ```
 
 If the AppImage cannot mount (common without FUSE):
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./soh-pc.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./soh-raspberry-pi.AppImage
 ```
 
 First launch extracts `oot.o2r` beside the AppImage. There is no external `assets/` folder.

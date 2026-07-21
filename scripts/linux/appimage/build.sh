@@ -10,7 +10,7 @@
 #   # Pi (run ON the Pi). Do NOT git-clone onto the tiny rootfs.
 #   # Mounts /media/sd/soh-build.img -> ~/soh-build, clones into that image,
 #   # then builds there. Bootstrap from /tmp if you have no checkout yet:
-#   curl -fsSL https://raw.githubusercontent.com/gustavostuff/Shipwright-CRT/main/scripts/linux/appimage/build.sh \
+#   curl -fsSL https://raw.githubusercontent.com/gustavostuff/Shipwright-CRT/develop/scripts/linux/appimage/build.sh \
 #     -o /tmp/soh-crt-build.sh && chmod +x /tmp/soh-crt-build.sh
 #   HOST_TARGET=pi /tmp/soh-crt-build.sh
 #   # or, if already on the image checkout:
@@ -27,7 +27,8 @@
 #   SUDO_PWD         piped to sudo -S for the loop mount (no prompt)
 #
 # Output: _packages/soh-pc.AppImage or soh-raspberry-pi.AppImage
-#         plus shipofharkinian.json and proggy-tiny.ttf beside it.
+#         plus shipofharkinian.json, proggy-tiny.ttf, and
+#         proggy-tiny-licence.txt beside it.
 #
 
 set -euo pipefail
@@ -225,9 +226,10 @@ print(f"wrote {dst} (fullscreen={fs['Enabled']}, size={win.get('Width')}x{win.ge
 PY
 
 command cp -f "$CONFIG_DIR/proggy-tiny.ttf" "$PACKAGES/"
+command cp -f "$CONFIG_DIR/proggy-tiny-licence.txt" "$PACKAGES/"
 
 echo
 echo ">> Done."
-ls -lah "$APPIMAGE" "$PACKAGES/shipofharkinian.json" "$PACKAGES/proggy-tiny.ttf"
+ls -lah "$APPIMAGE" "$PACKAGES/shipofharkinian.json" "$PACKAGES/proggy-tiny.ttf" "$PACKAGES/proggy-tiny-licence.txt"
 echo "   Run from $PACKAGES with a legal OoT ROM beside the AppImage."
 echo "   If FUSE is unavailable: APPIMAGE_EXTRACT_AND_RUN=1 ./$(basename "$APPIMAGE")"
