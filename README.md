@@ -1,5 +1,4 @@
 # Shipwright-CRT
-===============
 
 A fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) for **320x240 CRT** play, with a small controller-friendly settings UI.
 
